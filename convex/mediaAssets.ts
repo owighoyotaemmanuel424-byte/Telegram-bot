@@ -11,4 +11,9 @@ export const create = mutation({
   }
 });
 
+export const latest = query({ args: { conversationId: v.id('conversations'), type: assetType }, handler: async (ctx, { conversationId, type }) => {
+  const assets = await ctx.db.query('mediaAssets').withIndex('by_conversation', q => q.eq('conversationId', conversationId)).order('desc').take(100);
+  return assets.find(asset => asset.type === type) ?? null;
+}});
+
 export const listForConversation = query({ args: { conversationId: v.id('conversations') }, handler: async (ctx, { conversationId }) => ctx.db.query('mediaAssets').withIndex('by_conversation', q => q.eq('conversationId', conversationId)).order('desc').take(100) });
