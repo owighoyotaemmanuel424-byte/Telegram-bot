@@ -2,45 +2,35 @@ import { GeminiToolDispatcher } from './tool-dispatcher.js';
 import type { MediaProvider } from '../providers/types.js';
 import { ImageToVideoWorker } from '../workers/image-to-video.js';
 
+const requiredString = (args: Record<string, unknown>, key: string) => {
+  const value = args[key];
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${key} is required`);
+  return value.trim();
+};
+
+const assetIds = (args: Record<string, unknown>) => {
+  if (!Array.isArray(args.asset_ids) || !args.asset_ids.every(id => typeof id === 'string')) throw new Error('asset_ids must be an array of strings');
+  return args.asset_ids as string[];
+};
+
 export function registerMediaTools(dispatcher: GeminiToolDispatcher, deps: { videoProvider: MediaProvider }) {
   dispatcher.register('generate_video', async (args, context) => {
-    const prompt = typeof args.prompt === 'string' ? args.prompt : '';
-    if (!prompt) throw new Error('generate_video requires a prompt');
-    const assetIds = Array.isArray(args.asset_ids) ? args.asset_ids.filter((id): id is string => typeof id === 'string') : [];
-    const assets = assetIds.map(id => ({ id, type: 'image', mimeType: 'image/*' }));
-    const result = await new ImageToVideoWorker(deps.videoProvider).run({ prompt, assets, options: { duration: args.duration, aspectRatio: args.aspect_ratio, userId: context.userId, jobId: context.jobId } });
+    const prompt = requiredString(args, 'prompt');
+    const ids = args.asset_ids === undefined ? [] : assetIds(args);
+    if (!ids.length) return { status: 'provider_required', operation: 'text_to_video', prompt, options: { duration: args.duration, aspectRatio: args.aspect_ratio } };
+    const result = await new ImageToVideoWorker(deps.videoProvider).run({ prompt, assets: ids.map(id => ({ id, type: 'image', mimeType: 'image/*' })), options: { duration: args.duration, aspectRatio: args.aspect_ratio, userId: context.userId, jobId: context.jobId } });
     return { providerJobId: result.job.providerJobId, status: result.job.status, progress: result.job.progress ?? 100, outputAssets: result.job.outputAssets ?? [] };
   });
 
-  dispatcher.register('edit_video', async (args) => {
-    const instructions = typeof args.instructions === 'string' ? args.instructions : '';
-    if (!instructions) throw new Error('edit_video requires instructions');
-    return { status: 'planned', instructions, assetIds: args.asset_ids ?? [] };
-  });
+  dispatcher.register('edit_video', async (args) => ({ status: 'planned', operation: 'video_edit', instructions: requiredString(args, 'instructions'), assetIds: assetIds(args) }));
 
-  dispatcher.register('generate_image', async (args) => {
-    const prompt = typeof args.prompt === 'string' ? args.prompt : '';
-    if (!prompt) throw new Error('generate_image requires a prompt');
-    return { status: 'provider_required', prompt, aspectRatio: args.aspect_ratio ?? '1:1' };
-  });
+  dispatcher.register('generate_image', async (args) => ({ status: 'provider_required', operation: 'image_generation', prompt: requiredString(args, 'prompt'), aspectRatio: args.aspect_ratio ?? '1:1' }));
 
-  dispatcher.register('edit_image', async (args) => {
-    if (!Array.isArray(args.asset_ids) || !args.asset_ids.length) throw new Error('edit_image requires asset_ids');
-    return { status: 'provider_required', prompt: args.prompt ?? '', assetIds: args.asset_ids };
-  });
+  dispatcher.register('edit_image', async (args) => ({ status: 'provider_required', operation: 'image_edit', prompt: requiredString(args, 'prompt'), assetIds: assetIds(args) }));
 
-  dispatcher.register('transcribe_audio', async (args) => {
-    if (typeof args.asset_id !== 'string') throw new Error('transcribe_audio requires asset_id');
-    return { status: 'provider_required', assetId: args.asset_id, language: args.language ?? null };
-  });
+  dispatcher.register('transcribe_audio', async (args) => ({ status: 'provider_required', operation: 'transcribe_audio', assetId: requiredString(args, 'asset_id'), language: typeof args.language === 'string' ? args.language : null }));
 
-  dispatcher.register('analyze_document', async (args) => {
-    if (typeof args.asset_id !== 'string') throw new Error('analyze_document requires asset_id');
-    return { status: 'provider_required', assetId: args.asset_id, question: args.question ?? null };
-  });
+  dispatcher.register('analyze_document', async (args) => ({ status: 'provider_required', operation: 'analyze_document', assetId: requiredString(args, 'asset_id'), question: typeof args.question === 'string' ? args.question : null }));
 
-  dispatcher.register('convert_media', async (args) => {
-    if (typeof args.asset_id !== 'string' || typeof args.target_format !== 'string') throw new Error('convert_media requires asset_id and target_format');
-    return { status: 'worker_required', assetId: args.asset_id, targetFormat: args.target_format, quality: args.quality ?? null };
-  });
+  dispatcher.register('convert_media', async (args) => ({ status: 'worker_required', operation: 'convert_media', assetId: requiredString(args, 'asset_id'), targetFormat: requiredString(args, 'target_format'), quality: typeof args.quality === 'string' ? args.quality : null }));
 }
