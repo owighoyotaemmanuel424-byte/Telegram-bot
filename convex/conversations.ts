@@ -14,6 +14,8 @@ export const getOrCreate = mutation({
 export const addMessage = mutation({
   args: { conversationId: v.id('conversations'), userId: v.id('users'), role: v.union(v.literal('user'), v.literal('assistant'), v.literal('tool')), text: v.string() },
   handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation || conversation.userId !== args.userId) throw new Error('Conversation access denied');
     const id = await ctx.db.insert('messages', { ...args, createdAt: Date.now() });
     await ctx.db.patch(args.conversationId, { updatedAt: Date.now() });
     return id;
