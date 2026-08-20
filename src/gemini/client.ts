@@ -3,7 +3,7 @@ export interface GeminiResponse { candidates?: Array<{ content?: { parts?: Gemin
 
 export class GeminiClient {
   private readonly apiKey = process.env.GEMINI_API_KEY;
-  private readonly model = process.env.GEMINI_TEXT_MODEL ?? 'gemini-2.5-flash';
+  private readonly model = process.env.GEMINI_TEXT_MODEL ?? 'gemini-3.5-flash';
 
   async generateContent(input: { systemInstruction?: string; contents: Array<{ role?: 'user' | 'model'; parts: GeminiPart[] }>; tools?: unknown[] }): Promise<GeminiResponse> {
     if (!this.apiKey) throw new Error('GEMINI_API_KEY is required');
