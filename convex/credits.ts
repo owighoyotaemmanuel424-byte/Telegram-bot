@@ -12,7 +12,7 @@ export const reserve = mutation({
     if (user.credits < amount) throw new Error('Insufficient credits');
     const now = Date.now();
     await ctx.db.patch(userId, { credits: user.credits - amount, updatedAt: now });
-    await ctx.db.insert('creditTransactions', { userId, amount: -amount, type: 'usage', reference, createdAt: now });
+    await ctx.db.insert('creditTransactions', { userId, amount: -amount, type: 'reserve', reference, createdAt: now });
     return true;
   }
 });
