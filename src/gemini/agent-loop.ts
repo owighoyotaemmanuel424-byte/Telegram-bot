@@ -1,15 +1,15 @@
-import type { GeminiClient, GeminiContent, GeminiResponse } from './client.js';
+import type { GeminiClient, GeminiContent, GeminiResponse, GeminiFunctionResult } from './client.js';
 import { GEMINI_TOOLS } from './agent-tools.js';
 import type { GeminiToolCall } from './agent.js';
 import { GeminiToolDispatcher, type ToolContext } from './tool-dispatcher.js';
 
 export interface AgentRunInput { systemPrompt: string; userPrompt: string; contents?: GeminiContent[]; context: ToolContext; maxToolRounds?: number; }
-
 export interface AgentRunResult { response: GeminiResponse; toolResults: Array<{ name: string; response: Record<string, unknown> }>; rounds: number; }
 
-function extractCalls(response: GeminiResponse): GeminiToolCall[] {
+function extractCalls(response: GeminiResponse): Array<GeminiToolCall & { id?: string }> {
   const parts = response.candidates?.[0]?.content?.parts ?? [];
   return parts.filter(part => part.functionCall?.name).map(part => ({
+    id: part.functionCall!.id,
     name: part.functionCall!.name as GeminiToolCall['name'],
     arguments: part.functionCall!.args ?? {}
   }));
@@ -19,7 +19,7 @@ export class GeminiAgentLoop {
   constructor(private readonly client: GeminiClient, private readonly dispatcher: GeminiToolDispatcher) {}
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
-    const maxRounds = input.maxToolRounds ?? 5;
+    const maxRounds = Math.max(1, input.maxToolRounds ?? 5);
     let contents: GeminiContent[] = input.contents?.length ? [...input.contents] : [{ role: 'user', parts: [{ text: input.userPrompt }] }];
     let response = await this.client.generateContent({ systemInstruction: input.systemPrompt, contents, tools: GEMINI_TOOLS as unknown as unknown[] });
     const toolResults: Array<{ name: string; response: Record<string, unknown> }> = [];
@@ -31,17 +31,17 @@ export class GeminiAgentLoop {
       const modelContent = response.candidates?.[0]?.content;
       if (modelContent) contents.push(modelContent);
 
-      const results = [];
+      const results: GeminiFunctionResult[] = [];
       for (const call of calls) {
         try {
           const result = await this.dispatcher.execute(call, input.context);
           const normalized = result && typeof result === 'object' ? result as Record<string, unknown> : { result };
-          results.push({ name: call.name, response: normalized });
+          results.push({ id: call.id, name: call.name, response: normalized });
           toolResults.push({ name: call.name, response: normalized });
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Tool execution failed';
           const failure = { error: message };
-          results.push({ name: call.name, response: failure });
+          results.push({ id: call.id, name: call.name, response: failure });
           toolResults.push({ name: call.name, response: failure });
         }
       }
