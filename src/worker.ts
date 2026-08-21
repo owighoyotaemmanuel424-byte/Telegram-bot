@@ -5,7 +5,7 @@ import { S3MediaStorage } from './storage/s3.js';
 import { TelegramApi } from './telegram/api.js';
 import type { MediaAsset } from './gemini/types.js';
 
-type WorkerJob = { _id: string; userId: string; telegramChatId?: string; status: string; prompt: string; intent: string; progress: number; sourceAssetIds?: string[] };
+type WorkerJob = { _id: string; userId: string; telegramChatId?: string; telegramStatusMessageId?: number; status: string; prompt: string; intent: string; progress: number; sourceAssetIds?: string[] };
 type WorkerAsset = { _id: string; storageKey?: string; type: MediaAsset['type']; mimeType: string; telegramFileId?: string };
 
 class WorkerGateway {
@@ -21,50 +21,40 @@ const provider = new ConfiguredVideoProvider(config.VIDEO_PROVIDER_ENDPOINT);
 const storage = new S3MediaStorage();
 const telegram = new TelegramApi();
 
+async function progress(job: WorkerJob, text: string) { if (job.telegramChatId && job.telegramStatusMessageId) { try { await telegram.editMessage(job.telegramChatId, job.telegramStatusMessageId, text); } catch (error) { console.warn('Telegram progress update failed:', error); } } }
+
 async function processJob(job: WorkerJob, sourceAssets: WorkerAsset[]) {
   if (job.intent !== 'image_to_video' && job.intent !== 'text_to_video') { await gateway.fail(job._id, `Unsupported worker intent: ${job.intent}`); return; }
   await gateway.status({ jobId: job._id, status: 'processing', progress: 5, provider: provider.name });
+  await progress(job, '🔍 Preparing your media...\n\n░░░░░░░░░░ 5%');
   const assets: MediaAsset[] = [];
-  for (const asset of sourceAssets) {
-    if (!asset.storageKey) continue;
-    const uri = await storage.signedGetUrl(asset.storageKey, 900);
-    assets.push({ id: String(asset._id), type: asset.type, mimeType: asset.mimeType, telegramFileId: asset.telegramFileId, storageKey: asset.storageKey, uri });
-  }
+  for (const asset of sourceAssets) { if (!asset.storageKey) continue; const uri = await storage.signedGetUrl(asset.storageKey, 900); assets.push({ id: String(asset._id), type: asset.type, mimeType: asset.mimeType, telegramFileId: asset.telegramFileId, storageKey: asset.storageKey, uri }); }
   await gateway.status({ jobId: job._id, status: 'generating', progress: 10, provider: provider.name });
+  await progress(job, '🎬 Generating your video...\n\n█░░░░░░░░░ 10%');
   const created = await provider.create({ operation: job.intent, prompt: job.prompt, assets, options: { jobId: job._id } });
   await gateway.status({ jobId: job._id, status: 'generating', progress: created.progress ?? 10, provider: provider.name, providerJobId: created.providerJobId });
-  for (let attempt = 0; attempt < 120; attempt++) {
-    await new Promise(resolve => setTimeout(resolve, 5000));
+  for (let attempt = 0; attempt < config.WORKER_MAX_POLLS; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, config.WORKER_INTERVAL_MS));
     const current = await provider.getStatus(created.providerJobId);
     if (current.status === 'failed') throw new Error(current.error ?? 'Media provider failed');
+    const pct = Math.max(10, Math.min(95, current.progress ?? 10));
+    await gateway.status({ jobId: job._id, status: current.status === 'completed' ? 'uploading' : 'generating', progress: pct, provider: provider.name, providerJobId: created.providerJobId, outputAssets: current.outputAssets });
+    await progress(job, `🎬 Creating your video...\n\n${'█'.repeat(Math.floor(pct / 10))}${'░'.repeat(10 - Math.floor(pct / 10))} ${pct}%`);
     if (current.status === 'completed') {
       const outputAssets = current.outputAssets ?? [];
       const outputUrl = outputAssets.find(asset => asset.uri)?.uri;
       await gateway.status({ jobId: job._id, status: 'completed', progress: 100, provider: provider.name, providerJobId: created.providerJobId, outputUrl, outputAssets });
-      if (job.telegramChatId) {
-        for (const output of outputAssets) {
-          if (output.type === 'video' && output.uri) await telegram.sendVideo(job.telegramChatId, output.uri, '🎬 Your video is ready.');
-          else if (output.type === 'image' && output.uri) await telegram.sendPhoto(job.telegramChatId, output.uri, '🖼 Your image is ready.');
-          else if (output.type === 'audio' && output.uri) await telegram.sendAudio(job.telegramChatId, output.uri, '🎙 Your audio is ready.');
-          else if (output.uri) await telegram.sendDocument(job.telegramChatId, output.uri, '📄 Your file is ready.');
-        }
-      }
+      await progress(job, '✅ Your video is ready. Sending it now...');
+      if (job.telegramChatId) for (const output of outputAssets) { if (output.type === 'video' && output.uri) await telegram.sendVideo(job.telegramChatId, output.uri, '🎬 Your video is ready.'); else if (output.type === 'image' && output.uri) await telegram.sendPhoto(job.telegramChatId, output.uri, '🖼 Your image is ready.'); else if (output.type === 'audio' && output.uri) await telegram.sendAudio(job.telegramChatId, output.uri, '🎙 Your audio is ready.'); else if (output.uri) await telegram.sendDocument(job.telegramChatId, output.uri, '📄 Your file is ready.'); }
       return;
     }
-    await gateway.status({ jobId: job._id, status: 'generating', progress: Math.max(10, Math.min(95, current.progress ?? 10)), provider: provider.name, providerJobId: created.providerJobId });
   }
-  throw new Error('Media provider job timed out after 10 minutes');
+  throw new Error(`Media provider job timed out after ${Math.round((config.WORKER_MAX_POLLS * config.WORKER_INTERVAL_MS) / 60000)} minutes`);
 }
 
 async function loop() {
   if (!config.CONVEX_URL || !config.AGENT_GATEWAY_SECRET || !config.TELEGRAM_BOT_TOKEN || !config.STORAGE_BUCKET || !config.STORAGE_ACCESS_KEY || !config.STORAGE_SECRET_KEY || !config.VIDEO_PROVIDER_API_KEY || !config.VIDEO_PROVIDER_ENDPOINT) throw new Error('Worker requires Convex, Telegram, S3, and video-provider configuration');
-  for (;;) {
-    try {
-      const claimed = await gateway.claim();
-      if (!claimed.job) { await new Promise(resolve => setTimeout(resolve, 2000)); continue; }
-      try { await processJob(claimed.job, claimed.assets); } catch (error) { await gateway.fail(claimed.job._id, error instanceof Error ? error.message : 'Worker failed'); if (claimed.job.telegramChatId) await telegram.sendMessage(claimed.job.telegramChatId, `❌ Media job failed: ${error instanceof Error ? error.message : 'Unknown worker error'}`); }
-    } catch (error) { console.error('Worker loop error:', error); await new Promise(resolve => setTimeout(resolve, 5000)); }
-  }
+  for (;;) { try { const claimed = await gateway.claim(); if (!claimed.job) { await new Promise(resolve => setTimeout(resolve, config.WORKER_INTERVAL_MS)); continue; } try { await processJob(claimed.job, claimed.assets); } catch (error) { const reason = error instanceof Error ? error.message : 'Worker failed'; await gateway.fail(claimed.job._id, reason); await progress(claimed.job, `❌ Media job failed: ${reason}`); } } catch (error) { console.error('Worker loop error:', error); await new Promise(resolve => setTimeout(resolve, config.WORKER_INTERVAL_MS * 2)); } }
 }
 
 loop().catch(error => { console.error(error); process.exit(1); });
