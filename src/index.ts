@@ -32,15 +32,16 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const RATE_LIMIT = 30;
 const RATE_WINDOW_MS = 60_000;
 function limited(key: string) { const now = Date.now(); const current = rate.get(key); if (!current || current.resetAt <= now) { rate.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS }); return false; } current.count += 1; return current.count > RATE_LIMIT; }
+function headerValue(value: string | string[] | undefined): string { return Array.isArray(value) ? (value[0] ?? '') : (value ?? ''); }
 
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, geminiConfigured: Boolean(geminiClient), telegramConfigured: Boolean(telegramApi), convexConfigured: Boolean(jobs), storageConfigured: Boolean(multimodalStorage), videoProviderConfigured: videoProvider.capabilities.imageToVideo, imageProviderConfigured: imageProvider.capabilities.imageGeneration, audioProviderConfigured: audioProvider.capabilities.audioGeneration })); return; }
   if (req.method === 'GET' && req.url === '/admin/providers') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(adminProviderSettingsPage()); return; }
-  if (req.method === 'GET' && req.url === '/admin/api/providers') { adminConfigResponse().then(r => r.text()).then(body => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(body); }).catch(() => { res.writeHead(500); res.end('Internal error'); }); return; }
-  if (req.method === 'PUT' && req.url === '/admin/api/providers') { let body = ''; req.setEncoding('utf8'); req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > MAX_BODY_BYTES) req.destroy(); }); req.on('end', async () => { try { const request = new Request('http://localhost/admin/api/providers', { method: 'PUT', headers: { 'content-type': req.headers['content-type'] ?? '', 'x-admin-secret': req.headers['x-admin-secret'] ?? '' }, body }); const result = await updateAdminConfig(request); const text = await result.text(); res.writeHead(result.status, { 'content-type': 'application/json' }); res.end(text); } catch { res.writeHead(400); res.end('Bad request'); } }); return; }
+  if (req.method === 'GET' && req.url === '/admin/api/providers') { void adminConfigResponse().then(async result => { res.writeHead(result.status, { 'content-type': 'application/json' }); res.end(await result.text()); }).catch(() => { res.writeHead(500); res.end('Internal error'); }); return; }
+  if (req.method === 'PUT' && req.url === '/admin/api/providers') { let body = ''; req.setEncoding('utf8'); req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > MAX_BODY_BYTES) req.destroy(); }); req.on('end', async () => { try { const request = new Request('http://localhost/admin/api/providers', { method: 'PUT', headers: { 'content-type': headerValue(req.headers['content-type']), 'x-admin-secret': headerValue(req.headers['x-admin-secret']) }, body }); const result = await updateAdminConfig(request); const text = await result.text(); res.writeHead(result.status, { 'content-type': 'application/json' }); res.end(text); } catch { res.writeHead(400); res.end('Bad request'); } }); return; }
   if (req.method === 'POST' && req.url === '/api/telegram/webhook') {
-    const suppliedSecret = req.headers['x-telegram-bot-api-secret-token'];
-    const clientKey = String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? 'unknown');
+    const suppliedSecret = headerValue(req.headers['x-telegram-bot-api-secret-token']);
+    const clientKey = headerValue(req.headers['x-forwarded-for']) || req.socket.remoteAddress || 'unknown';
     if (!config.TELEGRAM_WEBHOOK_SECRET || suppliedSecret !== config.TELEGRAM_WEBHOOK_SECRET) { res.writeHead(401); res.end('Unauthorized'); return; }
     if (limited(clientKey)) { res.writeHead(429); res.end('Too many requests'); return; }
     let body = ''; req.setEncoding('utf8'); req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > MAX_BODY_BYTES) { res.writeHead(413); res.end('Payload too large'); req.destroy(); } });
