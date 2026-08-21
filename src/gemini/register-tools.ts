@@ -17,6 +17,10 @@ export interface JobGateway {
   failAndRefund(jobId: string, reason: string): Promise<void>;
 }
 
+export interface TelegramJobGateway extends JobGateway {
+  createForTelegram(input: { telegramId: string; intent: string; prompt: string; creditsReserved: number; reference: string }): Promise<{ jobId: string }>;
+}
+
 export function registerMediaTools(dispatcher: GeminiToolDispatcher, deps: { videoProvider: MediaProvider; jobs: JobGateway; videoCredits?: number }) {
   dispatcher.register('generate_video', async (args, context) => {
     const prompt = requiredString(args, 'prompt');
@@ -24,7 +28,10 @@ export function registerMediaTools(dispatcher: GeminiToolDispatcher, deps: { vid
     if (!ids.length) return { status: 'provider_required', operation: 'text_to_video', prompt };
     const credits = deps.videoCredits ?? 30;
     const reference = `gemini:${context.userId}:${context.jobId ?? 'request'}:generate_video`;
-    const created = await deps.jobs.create({ userId: context.userId, intent: 'image_to_video', prompt, creditsReserved: credits, reference });
+    const jobs = deps.jobs as TelegramJobGateway;
+    const created = jobs.createForTelegram
+      ? await jobs.createForTelegram({ telegramId: context.userId, intent: 'image_to_video', prompt, creditsReserved: credits, reference })
+      : await deps.jobs.create({ userId: context.userId, intent: 'image_to_video', prompt, creditsReserved: credits, reference });
     try {
       const result = await new ImageToVideoWorker(deps.videoProvider).run({ prompt, assets: ids.map(id => ({ id, type: 'image', mimeType: 'image/*' })), options: { duration: args.duration, aspectRatio: args.aspect_ratio, jobId: created.jobId } });
       return { status: result.job.status, jobId: created.jobId, providerJobId: result.job.providerJobId, progress: result.job.progress ?? 100, outputAssets: result.job.outputAssets ?? [] };
