@@ -24,7 +24,7 @@ export const create = mutation({
   handler: async (ctx, args) => {
     if (!Number.isInteger(args.creditsReserved) || args.creditsReserved <= 0) throw new Error('creditsReserved must be a positive integer');
     const duplicate = await ctx.db.query('creditTransactions').withIndex('by_reference', q => q.eq('reference', args.reference)).unique();
-    if (duplicate) return duplicate.userId as any;
+    if (duplicate) return duplicate.userId;
     const user = await ctx.db.get(args.userId);
     if (!user) throw new Error('User not found');
     if (user.credits < args.creditsReserved) throw new Error('Insufficient credits');
@@ -52,26 +52,24 @@ export const updateStatus = mutation({
   handler: async (ctx, { jobId, ...patch }) => { await ctx.db.patch(jobId, { ...patch, updatedAt: Date.now() }); }
 });
 
-export const failAndRefundInternal = mutation({
-  args: { jobId: v.id('jobs'), reason: v.string() },
-  handler: async (ctx, { jobId, reason }) => {
-    const job = await ctx.db.get(jobId);
-    if (!job) throw new Error('Job not found');
-    if (job.status === 'failed' || job.status === 'cancelled') return false;
-    const reference = `refund:${jobId}`;
-    const duplicate = await ctx.db.query('creditTransactions').withIndex('by_reference', q => q.eq('reference', reference)).unique();
-    if (!duplicate && job.creditsReserved > 0) {
-      const user = await ctx.db.get(job.userId);
-      if (!user) throw new Error('User not found');
-      await ctx.db.patch(job.userId, { credits: user.credits + job.creditsReserved, updatedAt: Date.now() });
-      await ctx.db.insert('creditTransactions', { userId: job.userId, amount: job.creditsReserved, type: 'refund', reference, createdAt: Date.now() });
-    }
-    await ctx.db.patch(jobId, { status: 'failed', error: reason, updatedAt: Date.now() });
-    return true;
+async function failAndRefundImpl(ctx: any, { jobId, reason }: { jobId: any; reason: string }) {
+  const job = await ctx.db.get(jobId);
+  if (!job) throw new Error('Job not found');
+  if (job.status === 'failed' || job.status === 'cancelled') return false;
+  const reference = `refund:${jobId}`;
+  const duplicate = await ctx.db.query('creditTransactions').withIndex('by_reference', (q: any) => q.eq('reference', reference)).unique();
+  if (!duplicate && job.creditsReserved > 0) {
+    const user = await ctx.db.get(job.userId);
+    if (!user) throw new Error('User not found');
+    await ctx.db.patch(job.userId, { credits: user.credits + job.creditsReserved, updatedAt: Date.now() });
+    await ctx.db.insert('creditTransactions', { userId: job.userId, amount: job.creditsReserved, type: 'refund', reference, createdAt: Date.now() });
   }
-});
+  await ctx.db.patch(jobId, { status: 'failed', error: reason, updatedAt: Date.now() });
+  return true;
+}
 
-export const failAndRefund = mutation({ args: { jobId: v.id('jobs'), reason: v.string() }, handler: async (ctx, args) => ctx.runMutation(({} as any), args) });
+export const failAndRefundInternal = mutation({ args: { jobId: v.id('jobs'), reason: v.string() }, handler: failAndRefundImpl });
+export const failAndRefund = mutation({ args: { jobId: v.id('jobs'), reason: v.string() }, handler: failAndRefundImpl });
 
 export const get = query({ args: { jobId: v.id('jobs') }, handler: async (ctx, { jobId }) => ctx.db.get(jobId) });
 export const listForUser = query({ args: { userId: v.id('users') }, handler: async (ctx, { userId }) => ctx.db.query('jobs').withIndex('by_user', q => q.eq('userId', userId)).order('desc').take(50) });
