@@ -7,24 +7,28 @@ import { TelegramGeminiAgent } from './gemini/telegram-agent.js';
 import { TelegramApi } from './telegram/api.js';
 import { TelegramHandlers } from './telegram/handlers.js';
 import { ConfiguredVideoProvider } from './providers/configured-video.js';
+import { HttpConvexJobGateway } from './convex/gateway.js';
 import type { TelegramUpdate } from './telegram/types.js';
 
 const geminiClient = config.GEMINI_API_KEY ? new GeminiClient() : null;
 const telegramApi = config.TELEGRAM_BOT_TOKEN ? new TelegramApi() : null;
 const dispatcher = new GeminiToolDispatcher();
 const videoProvider = new ConfiguredVideoProvider(config.VIDEO_PROVIDER_ENDPOINT);
-const jobs = {
-  async create() { throw new Error('Convex JobGateway is not configured in this process'); },
-  async failAndRefund() { return undefined; }
-};
-registerMediaTools(dispatcher, { videoProvider, jobs });
+const jobs = config.CONVEX_URL && config.AGENT_GATEWAY_SECRET
+  ? new HttpConvexJobGateway(config.CONVEX_URL, config.AGENT_GATEWAY_SECRET)
+  : null;
+
+if (!jobs) console.warn('Convex JobGateway is not configured; paid media tools will fail safely until CONVEX_URL and AGENT_GATEWAY_SECRET are set.');
+if (jobs) registerMediaTools(dispatcher, { videoProvider, jobs });
+else registerMediaTools(dispatcher, { videoProvider, jobs: { async create() { throw new Error('Convex JobGateway is not configured'); }, async failAndRefund() {} } });
+
 const agent = geminiClient ? new TelegramGeminiAgent(geminiClient, dispatcher) : null;
 const handlers = agent && telegramApi ? new TelegramHandlers(telegramApi, agent) : null;
 
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, geminiConfigured: Boolean(geminiClient), telegramConfigured: Boolean(telegramApi), videoProviderConfigured: videoProvider.capabilities.imageToVideo }));
+    res.end(JSON.stringify({ ok: true, geminiConfigured: Boolean(geminiClient), telegramConfigured: Boolean(telegramApi), convexConfigured: Boolean(jobs), videoProviderConfigured: videoProvider.capabilities.imageToVideo }));
     return;
   }
   if (req.method === 'POST' && req.url === '/api/telegram/webhook') {
