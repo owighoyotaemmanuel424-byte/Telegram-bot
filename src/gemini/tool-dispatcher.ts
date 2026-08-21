@@ -1,7 +1,8 @@
 import type { GeminiToolCall } from './agent.js';
 import type { GeminiToolName } from './agent-tools.js';
+import type { MediaAsset } from './types.js';
 
-export interface ToolContext { userId: string; jobId?: string; }
+export interface ToolContext { userId: string; jobId?: string; assets?: MediaAsset[]; }
 export type ToolHandler = (args: Record<string, unknown>, context: ToolContext) => Promise<unknown>;
 
 export class GeminiToolDispatcher {
