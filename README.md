@@ -43,6 +43,63 @@ S3-compatible storage
 Telegram delivery
 ```
 
+## Production deployment
+
+The production deployment is two long-running services:
+
+1. **web** — Telegram webhook, Gemini orchestration, health/admin endpoints.
+2. **worker** — claims Convex jobs and performs asynchronous media-provider polling.
+
+Docker images are provided as `Dockerfile` and `Dockerfile.worker`. A local/VM deployment can use:
+
+```bash
+docker compose -f docker-compose.production.yml up -d --build
+```
+
+For managed container platforms, deploy the same Docker image twice: the web service runs `node dist/index.js`; the worker service runs `node dist/worker.js`.
+
+### Required production variables
+
+Set these as platform secrets/environment variables. Never commit them:
+
+```text
+PUBLIC_BASE_URL=https://your-public-https-domain.example
+TELEGRAM_BOT_TOKEN=<rotated BotFather token>
+TELEGRAM_WEBHOOK_SECRET=<random 16+ character secret>
+GEMINI_API_KEY=<Google Gemini API key>
+GEMINI_TEXT_MODEL=gemini-3.5-flash
+GEMINI_VISION_MODEL=gemini-3.5-flash
+GEMINI_FAST_MODEL=gemini-3.5-flash
+GEMINI_REASONING_MODEL=gemini-3.5-flash
+CONVEX_URL=<Convex deployment URL>
+AGENT_GATEWAY_SECRET=<random 32+ character secret>
+STORAGE_ENDPOINT=<S3-compatible endpoint>
+STORAGE_BUCKET=<private bucket>
+STORAGE_ACCESS_KEY=<storage access key>
+STORAGE_SECRET_KEY=<storage secret>
+VIDEO_PROVIDER_ENDPOINT=<real video provider endpoint>
+VIDEO_PROVIDER_API_KEY=<real video provider key>
+IMAGE_PROVIDER_ENDPOINT=<real image provider endpoint>
+IMAGE_PROVIDER_API_KEY=<real image provider key>
+AUDIO_PROVIDER_ENDPOINT=<real audio provider endpoint>
+AUDIO_PROVIDER_API_KEY=<real audio provider key>
+ADMIN_SECRET=<random 16+ character secret>
+```
+
+`PUBLIC_BASE_URL` must be the HTTPS origin of the web service. In production, the web process automatically registers Telegram's webhook as `${PUBLIC_BASE_URL}/api/telegram/webhook` using `TELEGRAM_WEBHOOK_SECRET`.
+
+### Convex deployment
+
+Deploy Convex first:
+
+```bash
+npm install
+npm run convex:codegen
+npm run convex:deploy
+```
+
+Set `AGENT_GATEWAY_SECRET` in the Convex deployment and in both application services. The `/agent/jobs/*` routes reject requests without the matching secret.
+
 ## Production processes
 
 Run the web process and worker separately:
@@ -55,17 +112,6 @@ npm run start:worker
 ```
 
 The web process must never perform long-running video generation inside the Telegram webhook. The worker claims queued jobs and performs provider polling asynchronously.
-
-## Convex
-
-Deploy Convex before enabling production jobs:
-
-```bash
-npm run convex:codegen
-npm run convex:deploy
-```
-
-Set `AGENT_GATEWAY_SECRET` in both the Convex deployment and Node/worker environment. Backend `/agent/jobs/*` routes require the matching secret.
 
 ## Providers
 
@@ -91,35 +137,15 @@ Each generic provider expects:
 
 Provider-specific adapters can be substituted without changing the Telegram/Gemini layer.
 
-## Environment
-
-Copy `.env.example` to your secret manager/environment. Never commit credentials.
-
-Important variables:
-
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_WEBHOOK_SECRET`
-- `GEMINI_API_KEY`
-- `GEMINI_TEXT_MODEL`
-- `GEMINI_VISION_MODEL`
-- `GEMINI_FAST_MODEL`
-- `GEMINI_REASONING_MODEL`
-- `CONVEX_URL`
-- `AGENT_GATEWAY_SECRET`
-- `STORAGE_ENDPOINT`
-- `STORAGE_BUCKET`
-- `STORAGE_ACCESS_KEY`
-- `STORAGE_SECRET_KEY`
-- provider API keys/endpoints
-- `ADMIN_SECRET`
-
 ## Telegram webhook
 
-Expose the Node server through HTTPS and configure Telegram to POST updates to:
+Expose the web server through HTTPS. In production, set `PUBLIC_BASE_URL`; webhook registration is then automatic at startup.
+
+Webhook endpoint:
 
 `/api/telegram/webhook`
 
-Use the same random `TELEGRAM_WEBHOOK_SECRET` in Telegram and the application environment.
+Use the same random `TELEGRAM_WEBHOOK_SECRET` in the application environment and Telegram webhook configuration. Never place the bot token in source control.
 
 ## Security
 
@@ -142,6 +168,20 @@ npm run build
 
 GitHub Actions performs the same dependency installation, Convex code generation, typecheck and production build validation.
 
-## Deployment
+## Deployment checklist
 
-See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for the two-process deployment model, environment configuration, webhook setup and production verification checklist.
+- [ ] Rotate any previously exposed Telegram token.
+- [ ] Deploy Convex and copy its deployment URL.
+- [ ] Generate `AGENT_GATEWAY_SECRET` and `TELEGRAM_WEBHOOK_SECRET`.
+- [ ] Configure Gemini API key and models.
+- [ ] Configure private S3-compatible storage.
+- [ ] Configure real image/video/audio provider endpoints and keys.
+- [ ] Deploy web service and worker service.
+- [ ] Set `PUBLIC_BASE_URL` to the web service HTTPS origin.
+- [ ] Verify `/health` reports the expected configured components.
+- [ ] Send `/start` in Telegram.
+- [ ] Test normal Gemini chat.
+- [ ] Upload an image and request image-to-video.
+- [ ] Verify a Convex job is queued, claimed, processed and completed.
+- [ ] Verify the generated asset is delivered to Telegram.
+- [ ] Test provider failure and confirm credits are refunded.
