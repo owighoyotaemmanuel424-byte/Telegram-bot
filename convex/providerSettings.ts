@@ -1,4 +1,4 @@
-import { mutation, query } from './_generated/server';
+import { internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { v } from 'convex/values';
 
 export const set = mutation({
@@ -13,6 +13,15 @@ export const set = mutation({
 });
 
 export const get = query({ args: { key: v.string() }, handler: async (ctx, { key }) => ctx.db.query('providerSettings').withIndex('by_key', q => q.eq('key', key)).unique() });
+
+export const getInternal = internalQuery({ args: { key: v.string() }, handler: async (ctx, { key }) => ctx.db.query('providerSettings').withIndex('by_key', q => q.eq('key', key)).unique() });
+
+export const setInternal = internalMutation({ args: { key: v.string(), encryptedValue: v.optional(v.string()), value: v.optional(v.string()), updatedBy: v.optional(v.string()) }, handler: async (ctx, args) => {
+  const existing = await ctx.db.query('providerSettings').withIndex('by_key', q => q.eq('key', args.key)).unique();
+  const patch = { encryptedValue: args.encryptedValue, value: args.value, updatedAt: Date.now(), updatedBy: args.updatedBy };
+  if (existing) { await ctx.db.patch(existing._id, patch); return existing._id; }
+  return await ctx.db.insert('providerSettings', { key: args.key, ...patch });
+});
 
 export const listPublic = query({ args: {}, handler: async ctx => {
   const rows = await ctx.db.query('providerSettings').collect();
