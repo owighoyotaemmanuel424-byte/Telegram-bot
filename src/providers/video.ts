@@ -21,6 +21,7 @@ export class VideoProviderAdapter implements MediaProvider {
     const apiKey = process.env.VIDEO_PROVIDER_API_KEY;
     if (!apiKey || !this.baseUrl) throw new Error('VIDEO_PROVIDER_API_KEY and VIDEO_PROVIDER_BASE_URL are required');
     const response = await providerRequest<ProviderResponse>(`${this.baseUrl.replace(/\/$/, '')}/generations/${encodeURIComponent(providerJobId)}`, apiKey);
-    return { providerJobId, status: response.status ?? 'processing', progress: response.progress, outputAssets: response.output_url ? [{ id: `provider:${providerJobId}`, type: 'video', mimeType: 'video/mp4', url: response.output_url }] : undefined, error: response.error };
+    const outputAssets: MediaAsset[] | undefined = response.output_url ? [{ id: `provider:${providerJobId}`, type: 'video', mimeType: 'video/mp4', uri: response.output_url }] : undefined;
+    return { providerJobId, status: response.status ?? 'processing', progress: response.progress, outputAssets, error: response.error };
   }
 }
