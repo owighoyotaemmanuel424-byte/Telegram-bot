@@ -17,8 +17,7 @@ export function registerMediaTools(dispatcher: GeminiToolDispatcher, deps: { vid
     const available = context.assets ?? [];
     const selected = requestedIds.length ? available.filter(asset => requestedIds.includes(asset.id)) : available.filter(asset => asset.type === 'image');
     if (requestedIds.length && selected.length !== requestedIds.length) throw new Error('One or more requested media assets are not available in the current conversation');
-    const isImageToVideo = selected.some(asset => asset.type === 'image');
-    if (!isImageToVideo) return { status: 'provider_required', operation: 'text_to_video', prompt };
+    if (!selected.some(asset => asset.type === 'image')) return { status: 'provider_required', operation: 'text_to_video', prompt };
     const credits = deps.videoCredits ?? 30;
     const reference = `gemini:${context.userId}:${context.requestId ?? context.jobId ?? 'request'}:generate_video`;
     const jobs = deps.jobs as TelegramJobGateway;
@@ -31,8 +30,8 @@ export function registerMediaTools(dispatcher: GeminiToolDispatcher, deps: { vid
       return { status: result.job.status, jobId: created.jobId, providerJobId: result.job.providerJobId, progress: result.job.progress ?? 100, outputAssets: result.job.outputAssets ?? [] };
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'Video generation failed';
-      await deps.jobs.updateStatus?.({ jobId: created.jobId, status: 'failed', progress: 100, provider: deps.videoProvider.name, error: reason });
       await deps.jobs.failAndRefund(created.jobId, reason);
+      await deps.jobs.updateStatus?.({ jobId: created.jobId, status: 'failed', progress: 100, provider: deps.videoProvider.name, error: reason });
       throw error;
     }
   });
