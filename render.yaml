@@ -1,0 +1,96 @@
+services:
+  - type: web
+    name: gemini-telegram-bot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_TEXT_MODEL
+        value: gemini-3.5-flash
+      - key: GEMINI_VISION_MODEL
+        value: gemini-3.5-flash
+      - key: GEMINI_FAST_MODEL
+        value: gemini-3.5-flash
+      - key: GEMINI_REASONING_MODEL
+        value: gemini-3.5-flash
+      - key: CONVEX_URL
+        sync: false
+      - key: AGENT_GATEWAY_SECRET
+        sync: false
+      - key: STORAGE_ENDPOINT
+        sync: false
+      - key: STORAGE_REGION
+        value: auto
+      - key: STORAGE_BUCKET
+        sync: false
+      - key: STORAGE_ACCESS_KEY
+        sync: false
+      - key: STORAGE_SECRET_KEY
+        sync: false
+      - key: STORAGE_FORCE_PATH_STYLE
+        value: "false"
+      - key: IMAGE_PROVIDER_API_KEY
+        sync: false
+      - key: IMAGE_PROVIDER_ENDPOINT
+        sync: false
+      - key: VIDEO_PROVIDER_API_KEY
+        sync: false
+      - key: VIDEO_PROVIDER_ENDPOINT
+        sync: false
+      - key: AUDIO_PROVIDER_API_KEY
+        sync: false
+      - key: AUDIO_PROVIDER_ENDPOINT
+        sync: false
+      - key: ADMIN_SECRET
+        sync: false
+
+  - type: worker
+    name: gemini-telegram-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: node dist/worker.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CONVEX_URL
+        sync: false
+      - key: AGENT_GATEWAY_SECRET
+        sync: false
+      - key: STORAGE_ENDPOINT
+        sync: false
+      - key: STORAGE_REGION
+        value: auto
+      - key: STORAGE_BUCKET
+        sync: false
+      - key: STORAGE_ACCESS_KEY
+        sync: false
+      - key: STORAGE_SECRET_KEY
+        sync: false
+      - key: STORAGE_FORCE_PATH_STYLE
+        value: "false"
+      - key: IMAGE_PROVIDER_API_KEY
+        sync: false
+      - key: IMAGE_PROVIDER_ENDPOINT
+        sync: false
+      - key: VIDEO_PROVIDER_API_KEY
+        sync: false
+      - key: VIDEO_PROVIDER_ENDPOINT
+        sync: false
+      - key: AUDIO_PROVIDER_API_KEY
+        sync: false
+      - key: AUDIO_PROVIDER_ENDPOINT
+        sync: false
