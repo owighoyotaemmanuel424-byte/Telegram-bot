@@ -10,6 +10,8 @@ const schema = z.object({
   GEMINI_TEXT_MODEL: z.string().default('gemini-3.5-flash'),
   GEMINI_VISION_MODEL: z.string().default('gemini-3.5-flash'),
   GEMINI_FAST_MODEL: z.string().default('gemini-3.5-flash'),
+  CONVEX_URL: z.string().url().optional(),
+  AGENT_GATEWAY_SECRET: z.string().min(32).optional(),
   DATABASE_URL: z.string().url().optional(),
   REDIS_URL: z.string().url().optional(),
   STORAGE_ENDPOINT: z.string().url().optional(),
