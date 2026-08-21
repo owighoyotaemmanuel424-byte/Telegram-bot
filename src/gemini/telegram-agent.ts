@@ -11,6 +11,7 @@ export interface TelegramAgentInput {
   userId: string;
   jobId?: string;
   chatId?: string;
+  statusMessageId?: number;
   conversationId?: string;
   conversationHistory?: Array<{ role: 'user' | 'assistant' | 'tool'; text: string }>;
   activeAsset?: { id: string; type: string; mimeType: string; storageKey?: string } | null;
@@ -27,7 +28,7 @@ export class TelegramGeminiAgent {
     const assets: MediaAsset[] = (input.assets ?? []).map(a => ({ id: a.id, type: a.type as MediaAsset['type'], mimeType: a.mimeType, storageKey: a.storageKey }));
     if (input.activeAsset && !assets.some(a => a.id === input.activeAsset!.id)) assets.push({ id: input.activeAsset.id, type: input.activeAsset.type as MediaAsset['type'], mimeType: input.activeAsset.mimeType, storageKey: input.activeAsset.storageKey });
     const requestId = randomUUID();
-    const context: ToolContext = { userId: input.userId, requestId, chatId: input.chatId, conversationId: input.conversationId, jobId: input.jobId, assets };
+    const context: ToolContext = { userId: input.userId, requestId, chatId: input.chatId, statusMessageId: input.statusMessageId, conversationId: input.conversationId, jobId: input.jobId, assets };
     const history = input.conversationHistory?.slice(-20) ?? [];
     const active = input.activeAsset ? `Active asset: ${input.activeAsset.id} (${input.activeAsset.type}, ${input.activeAsset.mimeType})${input.activeAsset.storageKey ? `, storage=${input.activeAsset.storageKey}` : ''}` : 'Active asset: none';
     const attached = assets.length ? `Attached media: ${assets.map(a => `${a.id} (${a.type}, ${a.mimeType})`).join(', ')}` : '';
