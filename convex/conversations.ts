@@ -11,6 +11,18 @@ export const getOrCreate = mutation({
   }
 });
 
+export const setActiveAsset = mutation({
+  args: { conversationId: v.id('conversations'), userId: v.id('users'), assetId: v.id('mediaAssets') },
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversationId);
+    const asset = await ctx.db.get(args.assetId);
+    if (!conversation || conversation.userId !== args.userId) throw new Error('Conversation access denied');
+    if (!asset || asset.userId !== args.userId || asset.conversationId !== args.conversationId) throw new Error('Asset access denied');
+    await ctx.db.patch(args.conversationId, { activeAssetId: args.assetId, updatedAt: Date.now() });
+    return args.assetId;
+  }
+});
+
 export const addMessage = mutation({
   args: { conversationId: v.id('conversations'), userId: v.id('users'), role: v.union(v.literal('user'), v.literal('assistant'), v.literal('tool')), text: v.string() },
   handler: async (ctx, args) => {
