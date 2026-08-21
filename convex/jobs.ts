@@ -4,7 +4,7 @@ import { v } from 'convex/values';
 const status = v.union(v.literal('queued'), v.literal('analyzing'), v.literal('processing'), v.literal('generating'), v.literal('rendering'), v.literal('uploading'), v.literal('completed'), v.literal('failed'), v.literal('cancelled'));
 const assetIds = v.optional(v.array(v.id('mediaAssets')));
 
-async function createForTelegramImpl(ctx: any, args: { telegramId: string; telegramChatId?: string; conversationId?: any; prompt: string; intent: string; creditsReserved: number; reference: string; sourceAssetIds?: any[] }) {
+async function createForTelegramImpl(ctx: any, args: { telegramId: string; telegramChatId?: string; telegramStatusMessageId?: number; conversationId?: any; prompt: string; intent: string; creditsReserved: number; reference: string; sourceAssetIds?: any[] }) {
   if (!Number.isInteger(args.creditsReserved) || args.creditsReserved <= 0) throw new Error('creditsReserved must be a positive integer');
   const duplicate = await ctx.db.query('creditTransactions').withIndex('by_reference', (q: any) => q.eq('reference', args.reference)).unique();
   if (duplicate) {
@@ -18,16 +18,16 @@ async function createForTelegramImpl(ctx: any, args: { telegramId: string; teleg
   const now = Date.now();
   await ctx.db.patch(user._id, { credits: user.credits - args.creditsReserved, updatedAt: now });
   await ctx.db.insert('creditTransactions', { userId: user._id, amount: -args.creditsReserved, type: 'reserve', reference: args.reference, createdAt: now });
-  return await ctx.db.insert('jobs', { userId: user._id, conversationId: args.conversationId, telegramChatId: args.telegramChatId, prompt: args.prompt, intent: args.intent, creditsReserved: args.creditsReserved, sourceAssetIds: args.sourceAssetIds, status: 'queued', progress: 0, createdAt: now, updatedAt: now });
+  return await ctx.db.insert('jobs', { userId: user._id, conversationId: args.conversationId, telegramChatId: args.telegramChatId, telegramStatusMessageId: args.telegramStatusMessageId, prompt: args.prompt, intent: args.intent, creditsReserved: args.creditsReserved, sourceAssetIds: args.sourceAssetIds, status: 'queued', progress: 0, createdAt: now, updatedAt: now });
 }
 
 export const create = mutation({
-  args: { userId: v.id('users'), conversationId: v.optional(v.id('conversations')), telegramChatId: v.optional(v.string()), prompt: v.string(), intent: v.string(), creditsReserved: v.number(), reference: v.string(), sourceAssetIds: assetIds },
+  args: { userId: v.id('users'), conversationId: v.optional(v.id('conversations')), telegramChatId: v.optional(v.string()), telegramStatusMessageId: v.optional(v.number()), prompt: v.string(), intent: v.string(), creditsReserved: v.number(), reference: v.string(), sourceAssetIds: assetIds },
   handler: async (ctx, args) => createForTelegramImpl(ctx, { ...args, telegramId: (await ctx.db.get(args.userId))?.telegramId ?? '' })
 });
 
 export const createForTelegram = mutation({
-  args: { telegramId: v.string(), telegramChatId: v.optional(v.string()), conversationId: v.optional(v.id('conversations')), prompt: v.string(), intent: v.string(), creditsReserved: v.number(), reference: v.string(), sourceAssetIds: assetIds },
+  args: { telegramId: v.string(), telegramChatId: v.optional(v.string()), telegramStatusMessageId: v.optional(v.number()), conversationId: v.optional(v.id('conversations')), prompt: v.string(), intent: v.string(), creditsReserved: v.number(), reference: v.string(), sourceAssetIds: assetIds },
   handler: createForTelegramImpl
 });
 
