@@ -9,21 +9,15 @@ export class ConvexHttpClient {
   }
 
   async mutation(path: string, args: Record<string, unknown>): Promise<unknown> {
-    const response = await fetch(`${this.url!.replace(/\/$/, '')}/api/mutation`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${this.secret}` },
-      body: JSON.stringify({ path, args })
-    });
+    const response = await fetch(`${this.url!.replace(/\/$/, '')}/api/mutation`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${this.secret}` }, body: JSON.stringify({ path, args }) });
     const body = await response.json() as ConvexResponse;
     if (!response.ok || body.status === 'error') throw new Error(body.errorMessage ?? `Convex mutation failed: ${response.status}`);
     return body.value;
   }
 
-  async getOrCreateTelegramUser(input: { telegramId: string; username?: string; firstName?: string; lastName?: string }): Promise<string> {
-    return String(await this.mutation('users:getOrCreateByTelegramId', input));
-  }
-
-  async createMediaAsset(input: { userId: string; telegramFileId: string; storageKey: string; type: 'image' | 'video' | 'audio' | 'document'; mimeType: string; conversationId?: string }): Promise<string> {
-    return String(await this.mutation('mediaAssets:create', input));
-  }
+  async getOrCreateTelegramUser(input: { telegramId: string; username?: string; firstName?: string; lastName?: string }): Promise<string> { return String(await this.mutation('users:getOrCreateByTelegramId', input)); }
+  async getOrCreateConversation(userId: string, title?: string): Promise<string> { return String(await this.mutation('conversations:getOrCreate', { userId, title })); }
+  async setActiveAsset(conversationId: string, userId: string, assetId: string): Promise<string> { return String(await this.mutation('conversations:setActiveAsset', { conversationId, userId, assetId })); }
+  async addMessage(conversationId: string, userId: string, role: 'user' | 'assistant' | 'tool', text: string): Promise<string> { return String(await this.mutation('conversations:addMessage', { conversationId, userId, role, text })); }
+  async createMediaAsset(input: { userId: string; telegramFileId: string; storageKey: string; type: 'image' | 'video' | 'audio' | 'document'; mimeType: string; conversationId?: string }): Promise<string> { return String(await this.mutation('mediaAssets:create', input)); }
 }
