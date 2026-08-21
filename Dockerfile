@@ -5,7 +5,7 @@ RUN npm install
 COPY tsconfig.json ./
 COPY src ./src
 COPY convex ./convex
-RUN npm run build
+RUN npm run convex:codegen && npm run build
 
 FROM node:22-alpine AS runtime
 WORKDIR /app
