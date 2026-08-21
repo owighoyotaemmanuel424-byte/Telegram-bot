@@ -12,18 +12,31 @@ type OutputAsset = { type?: string; uri?: string; telegramFileId?: string };
 export class TelegramHandlers {
   private readonly mediaIngestion?: TelegramMediaIngestion;
   private readonly convex?: ConvexHttpClient;
-  constructor(private readonly api: TelegramApi, private readonly agent: TelegramGeminiAgent) { if (process.env.CONVEX_URL && process.env.AGENT_GATEWAY_SECRET && process.env.STORAGE_BUCKET && process.env.STORAGE_ACCESS_KEY && process.env.STORAGE_SECRET_KEY) { this.mediaIngestion = new TelegramMediaIngestion(new TelegramMediaService(api), new S3MediaStorage()); this.convex = new ConvexHttpClient(); } }
+
+  constructor(private readonly api: TelegramApi, private readonly agent: TelegramGeminiAgent) {
+    // Conversation persistence only requires Convex + the agent gateway secret.
+    // Media ingestion has additional S3 requirements and must not disable
+    // persistent chat context when object storage is not configured yet.
+    if (process.env.CONVEX_URL && process.env.AGENT_GATEWAY_SECRET) {
+      this.convex = new ConvexHttpClient();
+    }
+
+    if (process.env.CONVEX_URL && process.env.AGENT_GATEWAY_SECRET && process.env.STORAGE_BUCKET && process.env.STORAGE_ACCESS_KEY && process.env.STORAGE_SECRET_KEY) {
+      this.mediaIngestion = new TelegramMediaIngestion(new TelegramMediaService(api), new S3MediaStorage());
+    }
+  }
+
   async handle(update: TelegramUpdate): Promise<void> {
     const message = update.message; if (!message) return;
     const input = message.text ?? message.caption ?? this.mediaPrompt(message); if (!input) return;
     const chatId = String(message.chat.id);
     if (input === '/start' || input === '/menu') { await this.api.sendMessage(chatId, '🤖 Gemini AI Media Assistant\n\nSend me a message or media with a natural-language instruction.', menu); return; }
-    if (input === '/help') { await this.api.sendMessage(chatId, 'Send text, photos, videos, audio, voice messages, or documents and tell me what you want done. Gemini will decide which tools to use.'); return; }
+    if (input === '/help') { await this.api.sendMessage(chatId, 'Send text, photos, videos, voice messages, or documents and tell me what you want done. Gemini will decide which tools to use.'); return; }
     const telegramId = String(message.from?.id ?? message.chat.id);
     const status = await this.api.sendMessage(chatId, '🧠 Gemini is analyzing your request...');
     const statusMessageId = (status as { message_id: number }).message_id;
     try {
-      if (!this.convex) throw new Error('Persistent Convex conversation context is not configured');
+      if (!this.convex) throw new Error('Persistent Convex conversation context is not configured. Set CONVEX_URL and AGENT_GATEWAY_SECRET in Render.');
       const userId = await this.convex.getOrCreateTelegramUser({ telegramId, username: message.from?.username, firstName: message.from?.first_name, lastName: message.from?.last_name });
       const conversationId = await this.convex.getOrCreateConversation(userId, `Telegram ${telegramId}`);
       let assets = this.extractAssets(message);
@@ -46,6 +59,7 @@ export class TelegramHandlers {
       for (const output of outputs) await this.sendOutput(chatId, output);
     } catch (error) { await this.api.editMessage(chatId, statusMessageId, `❌ ${error instanceof Error ? error.message : 'The AI workflow failed.'}`); }
   }
+
   private extractOutputAssets(result: unknown): OutputAsset[] { const outputs: OutputAsset[] = []; const visit = (value: unknown) => { if (!value || typeof value !== 'object') return; if (Array.isArray(value)) { value.forEach(visit); return; } const object = value as Record<string, unknown>; const uri = typeof object.uri === 'string' ? object.uri : undefined; const telegramFileId = typeof object.telegramFileId === 'string' ? object.telegramFileId : undefined; const type = typeof object.type === 'string' ? object.type : undefined; if ((uri || telegramFileId) && type) outputs.push({ uri, telegramFileId, type }); Object.entries(object).filter(([key]) => key === 'outputAssets' || key === 'result' || key === 'data').forEach(([, child]) => visit(child)); }; visit(result); return outputs; }
   private async sendOutput(chatId: string, output: OutputAsset) { const target = output.telegramFileId ?? output.uri; if (!target) return; if (output.type === 'video') await this.api.sendVideo(chatId, target, '🎬 Generated video'); else if (output.type === 'image') await this.api.sendPhoto(chatId, target, '🖼 Generated image'); else if (output.type === 'audio') await this.api.sendAudio(chatId, target, '🎙 Generated audio'); else await this.api.sendDocument(chatId, target, '📄 Generated file'); }
   private mediaPrompt(message: TelegramMessage): string | undefined { return message.photo || message.video || message.audio || message.voice || message.document ? 'Analyze this media and determine the best action.' : undefined; }
