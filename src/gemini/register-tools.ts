@@ -1,5 +1,6 @@
 import { GeminiToolDispatcher } from './tool-dispatcher.js';
 import type { MediaProvider } from '../providers/types.js';
+import type { MediaAsset } from './types.js';
 import { ImageToVideoWorker } from '../workers/image-to-video.js';
 
 const requiredString = (args: Record<string, unknown>, key: string) => { const value = args[key]; if (typeof value !== 'string' || !value.trim()) throw new Error(`${key} is required`); return value.trim(); };
@@ -18,7 +19,8 @@ export function registerMediaTools(dispatcher: GeminiToolDispatcher, deps: { vid
     const jobs = deps.jobs as TelegramJobGateway;
     const created = jobs.createForTelegram ? await jobs.createForTelegram({ telegramId: context.userId, intent: 'image_to_video', prompt, creditsReserved: credits, reference }) : await deps.jobs.create({ userId: context.userId, intent: 'image_to_video', prompt, creditsReserved: credits, reference });
     try {
-      const result = await new ImageToVideoWorker(deps.videoProvider).run({ prompt, assets: ids.map(id => ({ id, type: 'image', mimeType: 'image/*' })), options: { duration: args.duration, aspectRatio: args.aspect_ratio, jobId: created.jobId } });
+      const assets: MediaAsset[] = ids.map(id => ({ id, type: 'image', mimeType: 'image/*' }));
+      const result = await new ImageToVideoWorker(deps.videoProvider).run({ prompt, assets, options: { duration: args.duration, aspectRatio: args.aspect_ratio, jobId: created.jobId } });
       return { status: result.job.status, jobId: created.jobId, providerJobId: result.job.providerJobId, progress: result.job.progress ?? 100, outputAssets: result.job.outputAssets ?? [] };
     } catch (error) { await deps.jobs.failAndRefund(created.jobId, error instanceof Error ? error.message : 'Video generation failed'); throw error; }
   });
