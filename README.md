@@ -1,90 +1,147 @@
 # Gemini Telegram AI Media Assistant
 
-Production-oriented Telegram AI media agent using Gemini as the orchestration layer and Convex as the persistent application database.
+A production-oriented Telegram AI agent using Gemini as the reasoning/orchestration layer and Convex as the persistent application database.
 
-## What is implemented
+## Core capabilities
 
-- Telegram webhook server with natural-language requests
-- Gemini multimodal context and function-calling loop
-- Persistent Convex users, conversations, messages, assets, jobs, credits, audit logs and provider settings
-- S3-compatible media storage integration
-- Active-asset and conversation memory
-- Image-to-video provider abstraction with asynchronous polling
-- Request-scoped job idempotency and credit reservation/refund boundaries
-- Authenticated Convex job lifecycle gateway
-- Admin provider settings foundation
-- Health endpoint
-- TypeScript build/typecheck CI
+- Natural-language Telegram chat
+- Gemini multimodal image/audio/document context
+- Gemini function calling with tool-result feedback
+- Persistent conversations and active media context
+- Image generation and editing through a configurable provider
+- Image-to-video and text-to-video through a configurable provider
+- Voice generation and transcription through a configurable audio provider
+- Asynchronous Convex job queue with credit reservation/refund boundaries
+- Background worker polling with Telegram progress updates
+- S3-compatible media storage and short-lived signed URLs
+- Provider abstraction so media vendors can be replaced without changing Gemini orchestration
+- Telegram webhook authentication, payload limits and basic rate limiting
+- Admin provider configuration foundation
+- Health endpoint and CI type/build validation
 
 ## Architecture
 
 ```text
-Telegram -> Webhook -> Convex context + media storage -> Gemini
-                                              |
-                                              v
-                                      Tool/function calling
-                                              |
-                                   Media provider adapters
-                                              |
-                                      Convex job lifecycle
-                                              |
-                                     Telegram final response
+Telegram
+   |
+Webhook API -- immediate 200
+   |
+Convex user/conversation/media context
+   |
+Gemini multimodal agent
+   |
+Function calling + tool results
+   |
+Convex job queue + atomic credit reservation
+   |
+Background worker
+   |
+Image / Video / Audio providers
+   |
+S3-compatible storage
+   |
+Telegram delivery
 ```
 
-## Required production services
+## Production processes
 
-1. A hosted Node.js process for `src/index.ts`.
-2. A Convex deployment for the database and HTTP actions.
-3. An S3-compatible bucket such as Cloudflare R2, AWS S3, or another compatible service.
-4. Gemini API credentials.
-5. A real video provider configured through `VIDEO_PROVIDER_ENDPOINT` and `VIDEO_PROVIDER_API_KEY` for image-to-video.
+Run the web process and worker separately:
 
-Image, audio, transcription, document and deterministic editing providers remain adapter points; configure and implement the corresponding provider adapters before enabling those operations in production.
+```bash
+npm install
+npm run build
+npm start
+npm run start:worker
+```
+
+The web process must never perform long-running video generation inside the Telegram webhook. The worker claims queued jobs and performs provider polling asynchronously.
+
+## Convex
+
+Deploy Convex before enabling production jobs:
+
+```bash
+npm run convex:codegen
+npm run convex:deploy
+```
+
+Set `AGENT_GATEWAY_SECRET` in both the Convex deployment and Node/worker environment. Backend `/agent/jobs/*` routes require the matching secret.
+
+## Providers
+
+The repository uses a common provider contract. Configure real provider endpoints; the application does not fabricate successful media results.
+
+### Video
+
+`VIDEO_PROVIDER_ENDPOINT` + `VIDEO_PROVIDER_API_KEY`
+
+### Image
+
+`IMAGE_PROVIDER_ENDPOINT` + `IMAGE_PROVIDER_API_KEY`
+
+### Audio / voice / transcription
+
+`AUDIO_PROVIDER_ENDPOINT` + `AUDIO_PROVIDER_API_KEY`
+
+Each generic provider expects:
+
+- `POST /` with `{ operation, prompt, assets, options }`
+- `GET /:providerJobId`
+- Response `{ id|providerJobId, status, progress?, outputAssets?, error? }`
+
+Provider-specific adapters can be substituted without changing the Telegram/Gemini layer.
 
 ## Environment
 
-Copy `.env.example` to `.env` and provide real credentials. Never commit secrets.
+Copy `.env.example` to your secret manager/environment. Never commit credentials.
 
 Important variables:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_WEBHOOK_SECRET`
 - `GEMINI_API_KEY`
-- `GEMINI_*_MODEL`
+- `GEMINI_TEXT_MODEL`
+- `GEMINI_VISION_MODEL`
+- `GEMINI_FAST_MODEL`
+- `GEMINI_REASONING_MODEL`
 - `CONVEX_URL`
 - `AGENT_GATEWAY_SECRET`
-- `STORAGE_*`
-- `VIDEO_PROVIDER_ENDPOINT`
-- `VIDEO_PROVIDER_API_KEY`
+- `STORAGE_ENDPOINT`
+- `STORAGE_BUCKET`
+- `STORAGE_ACCESS_KEY`
+- `STORAGE_SECRET_KEY`
+- provider API keys/endpoints
 - `ADMIN_SECRET`
 
-## Local validation
+## Telegram webhook
 
-```bash
-npm install
-npm run typecheck
-npm run build
-npm run convex:codegen
-npm run convex:deploy
-```
+Expose the Node server through HTTPS and configure Telegram to POST updates to:
 
-## Production webhook
+`/api/telegram/webhook`
 
-Expose the Node server over HTTPS and route Telegram updates to:
-
-`POST /api/telegram/webhook`
-
-The Telegram webhook secret must be configured as `TELEGRAM_WEBHOOK_SECRET`. The application itself must also have `TELEGRAM_BOT_TOKEN` and `GEMINI_API_KEY` configured.
+Use the same random `TELEGRAM_WEBHOOK_SECRET` in Telegram and the application environment.
 
 ## Security
 
-- Never place Telegram, Gemini, storage, payment or provider secrets in Git.
-- Rotate any credential that has been exposed outside the secret manager.
-- Keep `AGENT_GATEWAY_SECRET` private because it authorizes backend job operations.
-- Put the admin API behind a secret and HTTPS.
-- Enforce Telegram file size/MIME limits before processing untrusted media.
-- Run FFmpeg and media workers in isolated infrastructure when adding arbitrary media processing.
+- Rotate any credential that has been exposed in chat, logs, screenshots, or commits.
+- Keep Gemini, Telegram, storage, provider, payment and Convex secrets server-side.
+- Keep `/agent/jobs/*` private behind `AGENT_GATEWAY_SECRET`.
+- Use a private S3/R2 bucket and short-lived signed URLs.
+- Do not execute arbitrary shell commands from user input.
+- Run future FFmpeg/media processing in isolated workers.
+- Keep Telegram webhook payload limits and rate limiting enabled.
 
-## Status
+## Validation
 
-The core agent, multimodal context, Convex persistence, storage integration, function-calling, image-to-video worker and job lifecycle are wired. Actual media generation still requires real provider credentials and provider-specific adapter configuration; the repository does not fake provider results.
+```bash
+npm install
+npm run convex:codegen
+npm run typecheck
+npm run build
+```
+
+GitHub Actions performs the same dependency installation, Convex code generation, typecheck and production build validation.
+
+## Deployment
+
+See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for the two-process deployment model, environment configuration, webhook setup and production verification checklist.
