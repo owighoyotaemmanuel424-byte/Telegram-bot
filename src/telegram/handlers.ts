@@ -1,4 +1,4 @@
-import { GeminiService } from '../gemini/service.js';
+import { TelegramGeminiAgent } from '../gemini/telegram-agent.js';
 import { TelegramApi } from './api.js';
 import type { TelegramMessage, TelegramUpdate } from './types.js';
 
@@ -12,39 +12,34 @@ const menu = {
 };
 
 export class TelegramHandlers {
-  constructor(private readonly api: TelegramApi, private readonly gemini: GeminiService) {}
+  constructor(private readonly api: TelegramApi, private readonly agent: TelegramGeminiAgent) {}
 
   async handle(update: TelegramUpdate): Promise<void> {
     const message = update.message;
     if (!message) return;
-
     const input = message.text ?? message.caption ?? this.mediaPrompt(message);
     if (!input) return;
+    const chatId = String(message.chat.id);
 
     if (input === '/start' || input === '/menu') {
-      await this.api.sendMessage(String(message.chat.id), '🤖 Gemini AI Media Assistant\n\nSend me a message or media with a natural-language instruction.', menu);
+      await this.api.sendMessage(chatId, '🤖 Gemini AI Media Assistant\n\nSend me a message or media with a natural-language instruction.', menu);
       return;
     }
     if (input === '/help') {
-      await this.api.sendMessage(String(message.chat.id), 'Send text, photos, videos, audio, voice messages, or documents and tell me what you want done. I will plan the workflow with Gemini.');
+      await this.api.sendMessage(chatId, 'Send text, photos, videos, audio, voice messages, or documents and tell me what you want done. Gemini will decide which tools to use.');
       return;
     }
 
     const assets = this.extractAssets(message);
-    const status = await this.api.sendMessage(String(message.chat.id), '🧠 Analyzing your request with Gemini...');
-    const plan = await this.gemini.plan(input, assets);
-
-    if (plan.intent === 'chat') {
-      const answer = await this.gemini.chat(input);
-      await this.api.editMessage(String(message.chat.id), (status as { message_id: number }).message_id, answer);
-      return;
+    const status = await this.api.sendMessage(chatId, '🧠 Gemini is analyzing your request...');
+    try {
+      const result = await this.agent.run({ userPrompt: input, assets, userId: String(message.from?.id ?? message.chat.id) });
+      const text = result.response.candidates?.[0]?.content?.parts?.map(part => part.text).filter(Boolean).join('') || '✅ Done. I completed the requested workflow.';
+      await this.api.editMessage(chatId, (status as { message_id: number }).message_id, text);
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : 'The AI workflow failed.';
+      await this.api.editMessage(chatId, (status as { message_id: number }).message_id, `❌ ${messageText}`);
     }
-
-    await this.api.editMessage(
-      String(message.chat.id),
-      (status as { message_id: number }).message_id,
-      `✅ Plan ready\n\nTask: ${plan.operation}\nType: ${plan.inputType}\nTools: ${plan.tools.join(', ') || 'none'}\n\nThe media worker will execute this workflow once the configured provider is available.`
-    );
   }
 
   private mediaPrompt(message: TelegramMessage): string | undefined {
