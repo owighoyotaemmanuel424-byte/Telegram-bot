@@ -5,15 +5,9 @@ const assetType = v.union(v.literal('image'), v.literal('video'), v.literal('aud
 
 export const create = mutation({
   args: { userId: v.id('users'), conversationId: v.optional(v.id('conversations')), storageId: v.optional(v.id('_storage')), storageKey: v.optional(v.string()), telegramFileId: v.optional(v.string()), type: assetType, mimeType: v.string(), parentAssetId: v.optional(v.id('mediaAssets')) },
-  handler: async (ctx, args) => {
-    const parent = args.parentAssetId ? await ctx.db.get(args.parentAssetId) : null;
-    return await ctx.db.insert('mediaAssets', { ...args, version: (parent?.version ?? 0) + 1, createdAt: Date.now() });
-  }
+  handler: async (ctx, args) => { const parent = args.parentAssetId ? await ctx.db.get(args.parentAssetId) : null; return await ctx.db.insert('mediaAssets', { ...args, version: (parent?.version ?? 0) + 1, createdAt: Date.now() }); }
 });
 
-export const latest = query({ args: { conversationId: v.id('conversations'), type: assetType }, handler: async (ctx, { conversationId, type }) => {
-  const assets = await ctx.db.query('mediaAssets').withIndex('by_conversation', q => q.eq('conversationId', conversationId)).order('desc').take(100);
-  return assets.find(asset => asset.type === type) ?? null;
-}});
-
+export const latest = query({ args: { conversationId: v.id('conversations'), type: assetType }, handler: async (ctx, { conversationId, type }) => { const assets = await ctx.db.query('mediaAssets').withIndex('by_conversation', q => q.eq('conversationId', conversationId)).order('desc').take(100); return assets.find(asset => asset.type === type) ?? null; } });
 export const listForConversation = query({ args: { conversationId: v.id('conversations') }, handler: async (ctx, { conversationId }) => ctx.db.query('mediaAssets').withIndex('by_conversation', q => q.eq('conversationId', conversationId)).order('desc').take(100) });
+export const byIds = query({ args: { ids: v.array(v.id('mediaAssets')) }, handler: async (ctx, { ids }) => { const assets = []; for (const id of ids) { const asset = await ctx.db.get(id); if (asset) assets.push(asset); } return assets; } });
