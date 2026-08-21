@@ -1,4 +1,4 @@
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { config } from '../config.js';
 
 export class S3MediaStorage {
@@ -21,5 +21,11 @@ export class S3MediaStorage {
   async put(input: { key: string; body: Uint8Array; contentType: string }): Promise<{ key: string }> {
     await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: input.key, Body: input.body, ContentType: input.contentType }));
     return { key: input.key };
+  }
+
+  async get(key: string): Promise<Uint8Array> {
+    const result = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    if (!result.Body) throw new Error(`Stored media not found: ${key}`);
+    return result.Body.transformToByteArray();
   }
 }
