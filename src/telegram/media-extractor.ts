@@ -12,12 +12,12 @@ export function extractTelegramAssets(message: TelegramMessage): IncomingTelegra
   const assets: IncomingTelegramAsset[] = [];
   if (message.photo?.length) {
     const photo = message.photo[message.photo.length - 1];
-    assets.push({ fileId: photo.file_id, type: 'image', mimeType: 'image/jpeg', caption: message.caption });
+    if (photo) assets.push({ fileId: photo.file_id, type: 'image', mimeType: 'image/jpeg', ...(message.caption !== undefined ? { caption: message.caption } : {}) });
   }
-  if (message.video) assets.push({ fileId: message.video.file_id, type: 'video', mimeType: message.video.mime_type ?? 'video/mp4', caption: message.caption });
-  if (message.audio) assets.push({ fileId: message.audio.file_id, type: 'audio', mimeType: message.audio.mime_type ?? 'audio/mpeg', caption: message.caption });
-  if (message.voice) assets.push({ fileId: message.voice.file_id, type: 'audio', mimeType: message.voice.mime_type ?? 'audio/ogg', caption: message.caption });
-  if (message.document) assets.push({ fileId: message.document.file_id, type: 'document', mimeType: message.document.mime_type ?? 'application/octet-stream', caption: message.caption });
+  if (message.video) assets.push({ fileId: message.video.file_id, type: 'video', mimeType: message.video.mime_type ?? 'video/mp4', ...(message.caption !== undefined ? { caption: message.caption } : {}) });
+  if (message.audio) assets.push({ fileId: message.audio.file_id, type: 'audio', mimeType: message.audio.mime_type ?? 'audio/mpeg', ...(message.caption !== undefined ? { caption: message.caption } : {}) });
+  if (message.voice) assets.push({ fileId: message.voice.file_id, type: 'audio', mimeType: message.voice.mime_type ?? 'audio/ogg', ...(message.caption !== undefined ? { caption: message.caption } : {}) });
+  if (message.document) assets.push({ fileId: message.document.file_id, type: 'document', mimeType: message.document.mime_type ?? 'application/octet-stream', ...(message.caption !== undefined ? { caption: message.caption } : {}) });
   return assets;
 }
 
