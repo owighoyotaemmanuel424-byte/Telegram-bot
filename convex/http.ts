@@ -9,21 +9,24 @@ function authorized(request: Request) {
   return Boolean(expected) && request.headers.get('x-agent-secret') === expected;
 }
 
-http.route({
-  path: '/telegram/webhook',
-  method: 'POST',
-  handler: httpAction(async (_ctx, request) => {
-    const secret = request.headers.get('x-telegram-bot-api-secret-token');
-    if (!process.env.TELEGRAM_WEBHOOK_SECRET || secret !== process.env.TELEGRAM_WEBHOOK_SECRET) return new Response('Unauthorized', { status: 401 });
-    return new Response('ok', { status: 200 });
-  })
-});
+http.route({ path: '/telegram/webhook', method: 'POST', handler: httpAction(async (_ctx, request) => {
+  const secret = request.headers.get('x-telegram-bot-api-secret-token');
+  if (!process.env.TELEGRAM_WEBHOOK_SECRET || secret !== process.env.TELEGRAM_WEBHOOK_SECRET) return new Response('Unauthorized', { status: 401 });
+  return new Response('ok', { status: 200 });
+}) });
 
 http.route({ path: '/agent/jobs/create', method: 'POST', handler: httpAction(async (ctx, request) => {
   if (!authorized(request)) return new Response('Unauthorized', { status: 401 });
   const body = await request.json() as { telegramId: string; prompt: string; intent: string; creditsReserved: number; reference: string };
   const jobId = await ctx.runMutation(internal.jobs.createForTelegram, body);
   return Response.json({ jobId });
+}) });
+
+http.route({ path: '/agent/jobs/status', method: 'POST', handler: httpAction(async (ctx, request) => {
+  if (!authorized(request)) return new Response('Unauthorized', { status: 401 });
+  const body = await request.json() as { jobId: string; status: 'queued' | 'analyzing' | 'processing' | 'generating' | 'rendering' | 'uploading' | 'completed' | 'failed' | 'cancelled'; progress?: number; provider?: string; providerJobId?: string; outputUrl?: string; error?: string };
+  await ctx.runMutation(internal.jobs.updateStatus, body);
+  return Response.json({ ok: true });
 }) });
 
 http.route({ path: '/agent/jobs/fail', method: 'POST', handler: httpAction(async (ctx, request) => {
