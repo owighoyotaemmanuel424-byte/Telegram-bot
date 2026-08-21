@@ -34,6 +34,17 @@ export const addMessage = mutation({
   }
 });
 
+export const context = query({
+  args: { conversationId: v.id('conversations'), userId: v.id('users') },
+  handler: async (ctx, { conversationId, userId }) => {
+    const conversation = await ctx.db.get(conversationId);
+    if (!conversation || conversation.userId !== userId) throw new Error('Conversation access denied');
+    const messages = await ctx.db.query('messages').withIndex('by_conversation', q => q.eq('conversationId', conversationId)).order('desc').take(20);
+    const activeAsset = conversation.activeAssetId ? await ctx.db.get(conversation.activeAssetId) : null;
+    return { conversationId, activeAsset, messages: messages.reverse() };
+  }
+});
+
 export const recentMessages = query({
   args: { conversationId: v.id('conversations') },
   handler: async (ctx, { conversationId }) => ctx.db.query('messages').withIndex('by_conversation', q => q.eq('conversationId', conversationId)).order('desc').take(30)
