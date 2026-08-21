@@ -20,7 +20,7 @@ export function registerMediaTools(dispatcher: GeminiToolDispatcher, deps: { vid
     const isImageToVideo = selected.some(asset => asset.type === 'image');
     if (!isImageToVideo) return { status: 'provider_required', operation: 'text_to_video', prompt };
     const credits = deps.videoCredits ?? 30;
-    const reference = `gemini:${context.userId}:${context.jobId ?? 'request'}:generate_video`;
+    const reference = `gemini:${context.userId}:${context.requestId ?? context.jobId ?? 'request'}:generate_video`;
     const jobs = deps.jobs as TelegramJobGateway;
     const created = jobs.createForTelegram ? await jobs.createForTelegram({ telegramId: context.userId, intent: 'image_to_video', prompt, creditsReserved: credits, reference }) : await deps.jobs.create({ userId: context.userId, intent: 'image_to_video', prompt, creditsReserved: credits, reference });
     try {
