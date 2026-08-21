@@ -7,6 +7,7 @@ import { ConvexHttpClient } from '../convex/http-client.js';
 import type { TelegramMessage, TelegramUpdate } from './types.js';
 
 const menu = { inline_keyboard: [[{ text: '💬 AI Chat', callback_data: 'chat' }, { text: '🎨 Create Image', callback_data: 'image' }], [{ text: '🎬 Create Video', callback_data: 'video' }, { text: '🖼 Edit Photo', callback_data: 'edit_image' }], [{ text: '🎞 Edit Video', callback_data: 'edit_video' }, { text: '🎙 Audio & Voice', callback_data: 'audio' }], [{ text: '📄 Documents', callback_data: 'documents' }, { text: '🧰 Utilities', callback_data: 'utilities' }]] };
+type OutputAsset = { type?: string; uri?: string; telegramFileId?: string };
 
 export class TelegramHandlers {
   private readonly mediaIngestion?: TelegramMediaIngestion;
@@ -31,7 +32,6 @@ export class TelegramHandlers {
       if (!this.convex) throw new Error('Persistent Convex conversation context is not configured');
       const userId = await this.convex.getOrCreateTelegramUser({ telegramId, username: message.from?.username, firstName: message.from?.first_name, lastName: message.from?.last_name });
       const conversationId = await this.convex.getOrCreateConversation(userId, `Telegram ${telegramId}`);
-
       let assets = this.extractAssets(message);
       if (this.mediaIngestion && assets.length) {
         const stored = await this.mediaIngestion.ingest(message, userId);
@@ -43,19 +43,44 @@ export class TelegramHandlers {
         }
         assets = persisted;
       }
-
       await this.convex.addMessage(conversationId, userId, 'user', input);
       const context = await this.convex.getConversationContext(conversationId, userId);
       const history = (context.messages ?? []).map((m: { role: 'user' | 'assistant' | 'tool'; text: string }) => ({ role: m.role, text: m.text }));
       const active = context.activeAsset ? { id: String(context.activeAsset._id), type: context.activeAsset.type, mimeType: context.activeAsset.mimeType, storageKey: context.activeAsset.storageKey } : null;
       const result = await this.agent.run({ userPrompt: input, assets, activeAsset: active, conversationHistory: history, userId: telegramId });
-      const text = result.response.candidates?.[0]?.content?.parts?.map(part => part.text).filter(Boolean).join('') || '✅ Done. I completed the requested workflow.';
+      const parts = result.response.candidates?.[0]?.content?.parts ?? [];
+      const text = parts.map(part => part.text).filter(Boolean).join('') || '✅ Workflow completed.';
+      const outputs = this.extractOutputAssets(result);
       await this.convex.addMessage(conversationId, userId, 'assistant', text);
       await this.api.editMessage(chatId, (status as { message_id: number }).message_id, text);
+      for (const output of outputs) await this.sendOutput(chatId, output);
     } catch (error) {
       const messageText = error instanceof Error ? error.message : 'The AI workflow failed.';
       await this.api.editMessage(chatId, (status as { message_id: number }).message_id, `❌ ${messageText}`);
     }
+  }
+  private extractOutputAssets(result: unknown): OutputAsset[] {
+    const outputs: OutputAsset[] = [];
+    const visit = (value: unknown) => {
+      if (!value || typeof value !== 'object') return;
+      if (Array.isArray(value)) { value.forEach(visit); return; }
+      const object = value as Record<string, unknown>;
+      const uri = typeof object.uri === 'string' ? object.uri : undefined;
+      const telegramFileId = typeof object.telegramFileId === 'string' ? object.telegramFileId : undefined;
+      const type = typeof object.type === 'string' ? object.type : undefined;
+      if ((uri || telegramFileId) && type) outputs.push({ uri, telegramFileId, type });
+      Object.entries(object).filter(([key]) => key === 'outputAssets' || key === 'result' || key === 'data').forEach(([, child]) => visit(child));
+    };
+    visit(result);
+    return outputs;
+  }
+  private async sendOutput(chatId: string, output: OutputAsset): Promise<void> {
+    const target = output.telegramFileId ?? output.uri;
+    if (!target) return;
+    if (output.type === 'video') await this.api.sendVideo(chatId, target, '🎬 Generated video');
+    else if (output.type === 'image') await this.api.sendPhoto(chatId, target, '🖼 Generated image');
+    else if (output.type === 'audio') await this.api.sendAudio(chatId, target, '🎙 Generated audio');
+    else await this.api.sendDocument(chatId, target, '📄 Generated file');
   }
   private mediaPrompt(message: TelegramMessage): string | undefined { return message.photo || message.video || message.audio || message.voice || message.document ? 'Analyze this media and determine the best action.' : undefined; }
   private extractAssets(message: TelegramMessage) {
