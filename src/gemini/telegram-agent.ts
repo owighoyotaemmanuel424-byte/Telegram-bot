@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { GeminiAgentLoop } from './agent-loop.js';
 import { GeminiToolDispatcher, type ToolContext } from './tool-dispatcher.js';
 import type { GeminiClient, GeminiContent } from './client.js';
@@ -18,15 +19,13 @@ const MAX_INLINE_MEDIA_BYTES = 20 * 1024 * 1024;
 export class TelegramGeminiAgent {
   private readonly loop: GeminiAgentLoop;
   private readonly storage?: S3MediaStorage;
-  constructor(client: GeminiClient, dispatcher: GeminiToolDispatcher, storage?: S3MediaStorage) {
-    this.loop = new GeminiAgentLoop(client, dispatcher);
-    this.storage = storage;
-  }
+  constructor(client: GeminiClient, dispatcher: GeminiToolDispatcher, storage?: S3MediaStorage) { this.loop = new GeminiAgentLoop(client, dispatcher); this.storage = storage; }
 
   async run(input: TelegramAgentInput) {
     const assets: MediaAsset[] = (input.assets ?? []).map(a => ({ id: a.id, type: a.type as MediaAsset['type'], mimeType: a.mimeType, storageKey: a.storageKey }));
     if (input.activeAsset && !assets.some(a => a.id === input.activeAsset!.id)) assets.push({ id: input.activeAsset.id, type: input.activeAsset.type as MediaAsset['type'], mimeType: input.activeAsset.mimeType, storageKey: input.activeAsset.storageKey });
-    const context: ToolContext = { userId: input.userId, jobId: input.jobId, assets };
+    const requestId = input.jobId ?? randomUUID();
+    const context: ToolContext = { userId: input.userId, jobId: input.jobId, requestId, assets };
     const history = input.conversationHistory?.slice(-20) ?? [];
     const active = input.activeAsset ? `Active asset: ${input.activeAsset.id} (${input.activeAsset.type}, ${input.activeAsset.mimeType})${input.activeAsset.storageKey ? `, storage=${input.activeAsset.storageKey}` : ''}` : 'Active asset: none';
     const attached = assets.length ? `Attached media: ${assets.map(a => `${a.id} (${a.type}, ${a.mimeType})`).join(', ')}` : '';
