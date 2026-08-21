@@ -38,4 +38,5 @@ export interface MediaAsset {
   mimeType: string;
   uri?: string;
   telegramFileId?: string;
+  storageKey?: string;
 }
