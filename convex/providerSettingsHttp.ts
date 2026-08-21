@@ -9,7 +9,10 @@ function authorized(request: Request) {
 export const get = httpAction(async (ctx, request) => {
   if (!authorized(request)) return new Response('Unauthorized', { status: 401 });
   const keys = ['GEMINI_API_KEY', 'TELEGRAM_BOT_TOKEN', 'GEMINI_TEXT_MODEL', 'GEMINI_VISION_MODEL', 'GEMINI_FAST_MODEL'];
-  const result: Record<string, string | undefined> = {};
-  for (const key of keys) result[key] = (await ctx.runQuery(internal.providerSettings.getInternal, { key }))?.value;
+  const result: Record<string, unknown> = {};
+  for (const key of keys) {
+    const row = await ctx.runQuery(internal.providerSettings.getInternal, { key });
+    result[key] = { configured: Boolean(row?.encryptedValue || row?.value), value: key.includes('MODEL') ? row?.value : undefined, updatedAt: row?.updatedAt };
+  }
   return Response.json(result);
 });
