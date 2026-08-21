@@ -1,18 +1,22 @@
 {
   "name": "gemini-telegram-ai-media-assistant",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
+    "dev:worker": "tsx src/worker.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "start:worker": "node dist/worker.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "convex:dev": "convex dev",
     "convex:deploy": "convex deploy",
     "convex:codegen": "convex codegen"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.859.0",
+    "@aws-sdk/s3-request-presigner": "^3.859.0",
     "@google/genai": "^1.17.0",
     "convex": "^1.25.4",
     "dotenv": "^17.2.1",
