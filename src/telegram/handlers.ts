@@ -31,7 +31,6 @@ export class TelegramHandlers {
       if (!this.convex) throw new Error('Persistent Convex conversation context is not configured');
       const userId = await this.convex.getOrCreateTelegramUser({ telegramId, username: message.from?.username, firstName: message.from?.first_name, lastName: message.from?.last_name });
       const conversationId = await this.convex.getOrCreateConversation(userId, `Telegram ${telegramId}`);
-      await this.convex.addMessage(conversationId, userId, 'user', input);
 
       let assets = this.extractAssets(message);
       if (this.mediaIngestion && assets.length) {
@@ -45,7 +44,11 @@ export class TelegramHandlers {
         assets = persisted;
       }
 
-      const result = await this.agent.run({ userPrompt: input, assets, userId: telegramId });
+      await this.convex.addMessage(conversationId, userId, 'user', input);
+      const context = await this.convex.getConversationContext(conversationId, userId);
+      const history = (context.messages ?? []).map((m: { role: 'user' | 'assistant' | 'tool'; text: string }) => ({ role: m.role, text: m.text }));
+      const active = context.activeAsset ? { id: String(context.activeAsset._id), type: context.activeAsset.type, mimeType: context.activeAsset.mimeType, storageKey: context.activeAsset.storageKey } : null;
+      const result = await this.agent.run({ userPrompt: input, assets, activeAsset: active, conversationHistory: history, userId: telegramId });
       const text = result.response.candidates?.[0]?.content?.parts?.map(part => part.text).filter(Boolean).join('') || '✅ Done. I completed the requested workflow.';
       await this.convex.addMessage(conversationId, userId, 'assistant', text);
       await this.api.editMessage(chatId, (status as { message_id: number }).message_id, text);
@@ -60,7 +63,7 @@ export class TelegramHandlers {
     if (message.photo?.length) { const photo = message.photo[message.photo.length - 1]; if (photo) assets.push({ id: `tg-${photo.file_id}`, type: 'image', mimeType: 'image/jpeg', telegramFileId: photo.file_id }); }
     if (message.video) assets.push({ id: `tg-${message.video.file_id}`, type: 'video', mimeType: message.video.mime_type ?? 'video/mp4', telegramFileId: message.video.file_id });
     if (message.audio) assets.push({ id: `tg-${message.audio.file_id}`, type: 'audio', mimeType: message.audio.mime_type ?? 'audio/mpeg', telegramFileId: message.audio.file_id });
-    if (message.voice) assets.push({ id: `tg-${message.voice.file_id}`, type: 'audio', mimeType: message.voice.mime_type ?? 'audio/ogg', telegramFileId: message.voice.file_id });
+    if (message.voice) assets.push({ id: `tg-${message.voice.file_id}`, type: 'audio', mimeType: message.voice.mime_type ?? 'audio/ogg', telegramFileId: message.voice.mime_type ?? 'audio/ogg', telegramFileId: message.voice.file_id });
     if (message.document) assets.push({ id: `tg-${message.document.file_id}`, type: 'document', mimeType: message.document.mime_type ?? 'application/octet-stream', telegramFileId: message.document.file_id });
     return assets;
   }
