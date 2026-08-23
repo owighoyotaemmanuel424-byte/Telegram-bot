@@ -7,10 +7,10 @@ export function getAIProvider(): AIProvider {
   const runtime = getRuntimeSecrets();
   if (runtime.provider === 'openai') {
     const key = runtime.openaiApiKey ?? process.env.OPENAI_API_KEY;
-    if (!key) throw new Error('OpenAI is selected but OPENAI_API_KEY is not configured. Set it in Admin → AI Providers.');
+    if (!key) throw new Error('OpenAI is selected but no OpenAI API key is configured. Set it in Admin → AI Providers.');
     return new OpenAIClient(key, process.env.OPENAI_MODEL);
   }
   const key = runtime.geminiApiKey ?? process.env.GEMINI_API_KEY;
-  if (!key) throw new Error('Gemini is selected but GEMINI_API_KEY is not configured. Set it in Admin → AI Providers.');
-  return new GeminiClient();
+  if (!key) throw new Error('Gemini is selected but no Gemini API key is configured. Set it in Admin → AI Providers.');
+  return new GeminiClient(key, process.env.GEMINI_TEXT_MODEL);
 }
