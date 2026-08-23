@@ -1,0 +1,33 @@
+name: App Builder Validation
+
+on:
+  push:
+    branches:
+      - 'generated/**'
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check generated projects
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          projects=(generated/*)
+          if [ ${#projects[@]} -eq 0 ]; then
+            echo 'No generated project found; skipping.'
+            exit 0
+          fi
+          for project in "${projects[@]}"; do
+            test -f "$project/package.json"
+            test -f "$project/index.html"
+            test -f "$project/src/main.tsx"
+            if find "$project" -maxdepth 3 -type f \( -name '.env' -o -name '.env.*' \) | grep -q .; then
+              echo "Secret environment file found in $project"
+              exit 1
+            fi
+            echo "Validated $project"
+          done
