@@ -15,10 +15,7 @@ export class VercelDeployer {
 
   async deployFromGitHub(owner: string, repo: string, ref: string, name: string, rootDirectory?: string): Promise<DeploymentResult> {
     const query = this.teamId ? `?teamId=${encodeURIComponent(this.teamId)}` : '';
-    const deployment = await this.request(`/v13/deployments${query}`, {
-      method: 'POST',
-      body: JSON.stringify({ name: name.slice(0, 52), target: 'production', gitSource: { type: 'github', repo, ref, org: owner }, projectSettings: rootDirectory ? { rootDirectory } : undefined })
-    });
+    const deployment = await this.request(`/v13/deployments${query}`, { method: 'POST', body: JSON.stringify({ name: name.slice(0, 52), target: 'production', gitSource: { type: 'github', repo, ref, org: owner }, projectSettings: rootDirectory ? { rootDirectory } : undefined }) });
     return { id: deployment.id, url: deployment.url ? `https://${deployment.url}` : '', readyState: deployment.readyState ?? deployment.status ?? 'QUEUED' };
   }
 
@@ -32,5 +29,30 @@ export class VercelDeployer {
       await new Promise(resolve => setTimeout(resolve, 5000));
     }
     throw new Error('Vercel deployment timed out.');
+  }
+
+  async healthCheck(url: string, attempts = 5): Promise<{ ok: boolean; status: number; finalUrl: string }> {
+    let lastStatus = 0;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const response = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(10_000), headers: { 'user-agent': 'Telegram-AI-App-Builder/1.0' } });
+        lastStatus = response.status;
+        if (response.ok) return { ok: true, status: response.status, finalUrl: response.url };
+      } catch {}
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    }
+    return { ok: false, status: lastStatus, finalUrl: url };
+  }
+
+  async listProductionDeployments(projectName: string): Promise<Array<{ id: string; url: string; createdAt?: number; state?: string }>> {
+    const query = new URLSearchParams({ projectId: projectName, target: 'production', limit: '20' });
+    if (this.teamId) query.set('teamId', this.teamId);
+    const result = await this.request(`/v6/deployments?${query.toString()}`);
+    return (result.deployments ?? []).map((item: any) => ({ id: String(item.uid ?? item.id), url: item.url ? `https://${item.url}` : '', createdAt: item.createdAt, state: item.readyState ?? item.state }));
+  }
+
+  async rollback(projectIdOrName: string, deploymentId: string): Promise<void> {
+    const query = this.teamId ? `?teamId=${encodeURIComponent(this.teamId)}` : '';
+    await this.request(`/v1/projects/${encodeURIComponent(projectIdOrName)}/rollback/${encodeURIComponent(deploymentId)}${query}`, { method: 'POST', body: JSON.stringify({}) });
   }
 }
