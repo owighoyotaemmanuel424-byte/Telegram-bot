@@ -13,7 +13,7 @@ function extractJson(text: string): unknown { const fenced = text.match(/```(?:j
 export class AppBuilderService {
   constructor(private readonly gemini = new GeminiClient(), private readonly deployer?: VercelDeployer) {}
 
-  async generate(prompt: string, owner: string, repo: string, token: string, deploy = false): Promise<BuildResult> {
+  async generate(prompt: string, owner: string, repo: string, token: string): Promise<BuildResult> {
     const response = await this.gemini.generateContent({ systemInstruction: `You are a senior full-stack engineer generating a small, runnable web application from a Telegram user's request. Return ONLY valid JSON with this shape: {"projectName":"...","summary":"...","files":[{"path":"...","content":"..."}]}. Use Vite + React + TypeScript + plain CSS unless the request clearly needs another stack. The generated project must be self-contained, runnable with npm install && npm run build, and must not contain secrets. Keep it MVP-sized: at most ${MAX_FILES} files and each file under ${MAX_FILE_BYTES} bytes. Include package.json, index.html, src/main.tsx and required source files. Do not use markdown fences.`, contents: [{ role: 'user', parts: [{ text: prompt }] }] });
     const text = response.candidates?.[0]?.content?.parts?.map(part => part.text ?? '').join('') ?? '';
     const parsed = extractJson(text) as { projectName?: unknown; summary?: unknown; files?: unknown };
@@ -25,12 +25,13 @@ export class AppBuilderService {
     const slug = slugify(projectName);
     const branch = `generated/${slug}-${Date.now().toString(36)}`;
     await this.publish(owner, repo, token, branch, slug, files, `feat: generate ${slug} from Telegram prompt`);
-    let deployment: BuildResult['deployment'];
-    if (deploy) {
-      if (!this.deployer) throw new Error('Vercel deployment is not configured.');
-      deployment = await this.deployer.waitForReady((await this.deployer.deployFromGitHub(owner, repo, branch, slug)).id);
-    }
-    return { projectName, slug, summary: typeof parsed.summary === 'string' ? parsed.summary : 'Generated application', files, branch, repositoryUrl: `https://github.com/${owner}/${repo}`, deployment };
+    return { projectName, slug, summary: typeof parsed.summary === 'string' ? parsed.summary : 'Generated application', files, branch, repositoryUrl: `https://github.com/${owner}/${repo}` };
+  }
+
+  async deployExistingBranch(owner: string, repo: string, branch: string, projectName: string): Promise<NonNullable<BuildResult['deployment']>> {
+    if (!this.deployer) throw new Error('Vercel deployment is not configured.');
+    const created = await this.deployer.deployFromGitHub(owner, repo, branch, slugify(projectName));
+    return this.deployer.waitForReady(created.id);
   }
 
   private async github(token: string, path: string, init: RequestInit = {}): Promise<any> { const response = await fetch(`https://api.github.com${path}`, { ...init, headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${token}`, 'x-github-api-version': '2022-11-28', ...(init.headers ?? {}) } }); const body = await response.text(); if (!response.ok) throw new Error(`GitHub API ${response.status}: ${body.slice(0, 500)}`); return body ? JSON.parse(body) : undefined; }
