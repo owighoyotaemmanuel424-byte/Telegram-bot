@@ -12,6 +12,7 @@ import { HttpConvexJobGateway } from './convex/gateway.js';
 import { S3MediaStorage } from './storage/s3.js';
 import { adminConfigResponse, updateAdminConfig } from './admin/api.js';
 import { adminProviderSettingsPage } from './admin/dashboard.js';
+import { AppBuilderService } from './app-builder/service.js';
 import type { TelegramUpdate } from './telegram/types.js';
 
 const geminiClient = config.GEMINI_API_KEY ? new GeminiClient() : null;
@@ -26,7 +27,8 @@ const safeJobs = jobs ?? { async create() { throw new Error('Convex JobGateway i
 registerMediaTools(dispatcher, { videoProvider, imageProvider, audioProvider, jobs: safeJobs });
 const multimodalStorage = config.STORAGE_BUCKET && config.STORAGE_ACCESS_KEY && config.STORAGE_SECRET_KEY ? new S3MediaStorage() : undefined;
 const agent = geminiClient ? new TelegramGeminiAgent(geminiClient, dispatcher, multimodalStorage) : null;
-const handlers = agent && telegramApi ? new TelegramHandlers(telegramApi, agent) : null;
+const appBuilder = geminiClient && config.GITHUB_TOKEN && config.GITHUB_OWNER && config.GITHUB_REPOSITORY ? new AppBuilderService(geminiClient) : undefined;
+const handlers = agent && telegramApi ? new TelegramHandlers(telegramApi, agent, appBuilder) : null;
 const rate = new Map<string, { count: number; resetAt: number }>();
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const RATE_LIMIT = 30;
@@ -35,7 +37,7 @@ function limited(key: string) { const now = Date.now(); const current = rate.get
 function headerValue(value: string | string[] | undefined): string { return Array.isArray(value) ? (value[0] ?? '') : (value ?? ''); }
 
 const server = http.createServer((req, res) => {
-  if (req.method === 'GET' && req.url === '/health') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, geminiConfigured: Boolean(geminiClient), telegramConfigured: Boolean(telegramApi), convexConfigured: Boolean(jobs), storageConfigured: Boolean(multimodalStorage), videoProviderConfigured: videoProvider.capabilities.imageToVideo, imageProviderConfigured: imageProvider.capabilities.imageGeneration, audioProviderConfigured: audioProvider.capabilities.audioGeneration })); return; }
+  if (req.method === 'GET' && req.url === '/health') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, geminiConfigured: Boolean(geminiClient), telegramConfigured: Boolean(telegramApi), convexConfigured: Boolean(jobs), storageConfigured: Boolean(multimodalStorage), appBuilderConfigured: Boolean(appBuilder), githubConfigured: Boolean(config.GITHUB_TOKEN && config.GITHUB_OWNER && config.GITHUB_REPOSITORY), videoProviderConfigured: videoProvider.capabilities.imageToVideo, imageProviderConfigured: imageProvider.capabilities.imageGeneration, audioProviderConfigured: audioProvider.capabilities.audioGeneration })); return; }
   if (req.method === 'GET' && req.url === '/admin/providers') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(adminProviderSettingsPage()); return; }
   if (req.method === 'GET' && req.url === '/admin/api/providers') { try { const result = adminConfigResponse(); res.writeHead(result.status, { 'content-type': 'application/json' }); void result.text().then(text => res.end(text)); } catch { res.writeHead(500); res.end('Internal error'); } return; }
   if (req.method === 'PUT' && req.url === '/admin/api/providers') { let body = ''; req.setEncoding('utf8'); req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > MAX_BODY_BYTES) req.destroy(); }); req.on('end', async () => { try { const request = new Request('http://localhost/admin/api/providers', { method: 'PUT', headers: { 'content-type': headerValue(req.headers['content-type']), 'x-admin-secret': headerValue(req.headers['x-admin-secret']) }, body }); const result = await updateAdminConfig(request); const text = await result.text(); res.writeHead(result.status, { 'content-type': 'application/json' }); res.end(text); } catch { res.writeHead(400); res.end('Bad request'); } }); return; }
