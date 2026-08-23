@@ -1,11 +1,18 @@
-export interface GeminiPart { text?: string; inlineData?: { mimeType: string; data: string }; fileData?: { mimeType: string; fileUri: string }; functionCall?: { id?: string; name: string; args: Record<string, unknown> }; functionResponse?: { id?: string; name: string; response: Record<string, unknown> }; thoughtSignature?: string; }
-export interface GeminiContent { role?: 'user' | 'model'; parts: GeminiPart[] }
-export interface GeminiResponse { candidates?: Array<{ content?: GeminiContent }> }
-export interface GeminiFunctionResult { id?: string; name: string; response: Record<string, unknown> }
+import type { AIProvider, AIProviderContent, AIProviderFunctionResult, AIProviderPart, AIProviderResponse } from '../ai/provider.js';
 
-export class GeminiClient {
-  private readonly apiKey = process.env.GEMINI_API_KEY;
-  private readonly model = process.env.GEMINI_TEXT_MODEL ?? 'gemini-3.5-flash';
+export type GeminiPart = AIProviderPart;
+export type GeminiContent = AIProviderContent;
+export type GeminiResponse = AIProviderResponse;
+export type GeminiFunctionResult = AIProviderFunctionResult;
+
+export class GeminiClient implements AIProvider {
+  private readonly apiKey: string | undefined;
+  private readonly model: string;
+
+  constructor(apiKey = process.env.GEMINI_API_KEY, model = process.env.GEMINI_TEXT_MODEL ?? 'gemini-3.5-flash') {
+    this.apiKey = apiKey;
+    this.model = model;
+  }
 
   private async request(body: Record<string, unknown>): Promise<GeminiResponse> {
     if (!this.apiKey) throw new Error('GEMINI_API_KEY is required');

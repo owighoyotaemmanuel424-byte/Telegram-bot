@@ -1,37 +1,30 @@
-import type { GeminiClient, GeminiContent, GeminiResponse, GeminiFunctionResult } from './client.js';
+import type { AIProvider, AIProviderContent, AIProviderResponse, AIProviderFunctionResult } from '../ai/provider.js';
 import { GEMINI_TOOLS } from './agent-tools.js';
 import type { GeminiToolCall } from './agent.js';
 import { GeminiToolDispatcher, type ToolContext } from './tool-dispatcher.js';
 
-export interface AgentRunInput { systemPrompt: string; userPrompt: string; contents?: GeminiContent[]; context: ToolContext; maxToolRounds?: number; }
-export interface AgentRunResult { response: GeminiResponse; toolResults: Array<{ name: string; response: Record<string, unknown> }>; rounds: number; }
+export interface AgentRunInput { systemPrompt: string; userPrompt: string; contents?: AIProviderContent[]; context: ToolContext; maxToolRounds?: number; }
+export interface AgentRunResult { response: AIProviderResponse; toolResults: Array<{ name: string; response: Record<string, unknown> }>; rounds: number; }
 
-function extractCalls(response: GeminiResponse): Array<GeminiToolCall & { id?: string }> {
+function extractCalls(response: AIProviderResponse): Array<GeminiToolCall & { id?: string }> {
   const parts = response.candidates?.[0]?.content?.parts ?? [];
-  return parts.filter(part => part.functionCall?.name).map(part => ({
-    id: part.functionCall!.id,
-    name: part.functionCall!.name as GeminiToolCall['name'],
-    arguments: part.functionCall!.args ?? {}
-  }));
+  return parts.filter(part => part.functionCall?.name).map(part => ({ id: part.functionCall!.id, name: part.functionCall!.name as GeminiToolCall['name'], arguments: part.functionCall!.args ?? {} }));
 }
 
 export class GeminiAgentLoop {
-  constructor(private readonly client: GeminiClient, private readonly dispatcher: GeminiToolDispatcher) {}
+  constructor(private readonly client: AIProvider, private readonly dispatcher: GeminiToolDispatcher) {}
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
     const maxRounds = Math.max(1, input.maxToolRounds ?? 5);
-    let contents: GeminiContent[] = input.contents?.length ? [...input.contents] : [{ role: 'user', parts: [{ text: input.userPrompt }] }];
+    let contents: AIProviderContent[] = input.contents?.length ? [...input.contents] : [{ role: 'user', parts: [{ text: input.userPrompt }] }];
     let response = await this.client.generateContent({ systemInstruction: input.systemPrompt, contents, tools: GEMINI_TOOLS as unknown as unknown[] });
     const toolResults: Array<{ name: string; response: Record<string, unknown> }> = [];
-
     for (let round = 1; round <= maxRounds; round++) {
       const calls = extractCalls(response);
       if (!calls.length) return { response, toolResults, rounds: round };
-
       const modelContent = response.candidates?.[0]?.content;
       if (modelContent) contents.push(modelContent);
-
-      const results: GeminiFunctionResult[] = [];
+      const results: AIProviderFunctionResult[] = [];
       for (const call of calls) {
         try {
           const result = await this.dispatcher.execute(call, input.context);
@@ -45,10 +38,8 @@ export class GeminiAgentLoop {
           toolResults.push({ name: call.name, response: failure });
         }
       }
-
       response = await this.client.continueWithFunctionResults({ systemInstruction: input.systemPrompt, contents, tools: GEMINI_TOOLS as unknown as unknown[], results });
     }
-
-    throw new Error(`Gemini tool loop exceeded ${maxRounds} rounds`);
+    throw new Error(`AI tool loop exceeded ${maxRounds} rounds`);
   }
 }
