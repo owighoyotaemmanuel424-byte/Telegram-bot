@@ -35,6 +35,8 @@ const schema = z.object({
   GITHUB_TOKEN: z.string().min(1).optional(),
   GITHUB_OWNER: z.string().min(1).optional(),
   GITHUB_REPOSITORY: z.string().min(1).optional(),
+  VERCEL_TOKEN: z.string().min(1).optional(),
+  VERCEL_TEAM_ID: z.string().optional(),
   WORKER_ENABLED: z.coerce.boolean().default(false),
   WORKER_INTERVAL_MS: z.coerce.number().int().positive().default(2000),
   WORKER_MAX_POLLS: z.coerce.number().int().positive().default(120)
