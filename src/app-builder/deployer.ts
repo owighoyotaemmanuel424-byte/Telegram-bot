@@ -13,11 +13,11 @@ export class VercelDeployer {
     return text ? JSON.parse(text) : undefined;
   }
 
-  async deployFromGitHub(owner: string, repo: string, ref: string, name: string): Promise<DeploymentResult> {
+  async deployFromGitHub(owner: string, repo: string, ref: string, name: string, rootDirectory?: string): Promise<DeploymentResult> {
     const query = this.teamId ? `?teamId=${encodeURIComponent(this.teamId)}` : '';
     const deployment = await this.request(`/v13/deployments${query}`, {
       method: 'POST',
-      body: JSON.stringify({ name: name.slice(0, 52), target: 'production', gitSource: { type: 'github', repo, ref, org: owner } })
+      body: JSON.stringify({ name: name.slice(0, 52), target: 'production', gitSource: { type: 'github', repo, ref, org: owner }, projectSettings: rootDirectory ? { rootDirectory } : undefined })
     });
     return { id: deployment.id, url: deployment.url ? `https://${deployment.url}` : '', readyState: deployment.readyState ?? deployment.status ?? 'QUEUED' };
   }
