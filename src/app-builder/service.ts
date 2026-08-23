@@ -2,7 +2,7 @@ import { GeminiClient } from '../gemini/client.js';
 import { VercelDeployer } from './deployer.js';
 
 export type GeneratedFile = { path: string; content: string };
-export type BuildResult = { projectName: string; slug: string; summary: string; files: GeneratedFile[]; branch: string; repositoryUrl: string; deployment?: { url: string; id: string; readyState: string } };
+export type BuildResult = { projectName: string; slug: string; summary: string; files: GeneratedFile[]; branch: string; repositoryUrl: string; deployment?: { url: string; id: string; readyState: string; health: { ok: boolean; status: number; finalUrl: string }; rolledBack?: boolean } };
 
 const MAX_FILES = 35;
 const MAX_FILE_BYTES = 40_000;
@@ -15,7 +15,7 @@ export class AppBuilderService {
   constructor(private readonly gemini = new GeminiClient(), private readonly deployer?: VercelDeployer) {}
 
   async generate(prompt: string, owner: string, repo: string, token: string): Promise<BuildResult> {
-    const response = await this.gemini.generateContent({ systemInstruction: `You are a senior full-stack engineer generating a small, runnable web application from a Telegram user's request. Return ONLY valid JSON with this shape: {"projectName":"...","summary":"...","files":[{"path":"...","content":"..."}]}. Use Vite + React + TypeScript + plain CSS unless the request clearly needs another stack. The generated project must be self-contained, runnable with npm install && npm run build, and must not contain secrets. Keep it MVP-sized: at most ${MAX_FILES} files and each file under ${MAX_FILE_BYTES} bytes. Include package.json, index.html, src/main.tsx and required source files. Do not use markdown fences.`, contents: [{ role: 'user', parts: [{ text: prompt }] }] });
+    const response = await this.gemini.generateContent({ systemInstruction: `You are a senior full-stack engineer generating a small, runnable web application from a Telegram user's request. Return ONLY valid JSON with this shape: {"projectName":"...","summary":"...","files":[{"path":"...","content":"..."}]}. Use Vite + React + TypeScript + plain CSS unless the request clearly needs another stack. The generated project must be self-contained, runnable with npm install && npm run build, and must not contain secrets. Keep it MVP-sized: at most ${MAX_FILES} files and each file under ${MAX_FILE_BYTES} bytes. Include package.json, index.html, src/main.tsx and required source files. If the user requests authentication/admin functionality, implement it using server-side validation and environment variables named ADMIN_EMAIL and ADMIN_PASSWORD; never hard-code credentials or expose them through Vite client variables. Do not use markdown fences.`, contents: [{ role: 'user', parts: [{ text: prompt }] }] });
     const text = response.candidates?.[0]?.content?.parts?.map(part => part.text ?? '').join('') ?? '';
     const parsed = extractJson(text) as { projectName?: unknown; summary?: unknown; files?: unknown };
     if (!Array.isArray(parsed.files)) throw new Error('AI did not return project files.');
@@ -34,8 +34,16 @@ export class AppBuilderService {
   async deployExistingBranch(owner: string, repo: string, branch: string, projectName: string): Promise<NonNullable<BuildResult['deployment']>> {
     if (!this.deployer) throw new Error('Vercel deployment is not configured.');
     const slug = slugify(projectName);
+    const previous = (await this.deployer.listProductionDeployments(slug)).find(item => item.state === 'READY');
     const created = await this.deployer.deployFromGitHub(owner, repo, branch, slug, `generated/${slug}`);
-    return this.deployer.waitForReady(created.id);
+    const ready = await this.deployer.waitForReady(created.id);
+    const health = await this.deployer.healthCheck(ready.url);
+    if (!health.ok) {
+      let rolledBack = false;
+      if (previous) { try { await this.deployer.rollback(slug, previous.id); rolledBack = true; } catch {} }
+      throw new Error(`Deployment reached READY but failed live health check (HTTP ${health.status}).${rolledBack ? ' Production traffic was rolled back.' : ''}`);
+    }
+    return { ...ready, health };
   }
 
   private buildWorkflow(): string { return `name: Generated App Build\n\non:\n  push:\n    paths:\n      - 'generated/**'\n  workflow_dispatch:\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 20\n      - name: Locate generated project\n        id: project\n        shell: bash\n        run: |\n          path=$(find generated -mindepth 2 -maxdepth 2 -name package.json -print -quit)\n          test -n \"$path\"\n          echo \"path=$(dirname \"$path\")\" >> \"$GITHUB_OUTPUT\"\n      - name: Install dependencies\n        working-directory: ${{ steps.project.outputs.path }}\n        run: npm install --no-audit --no-fund\n      - name: Build\n        working-directory: ${{ steps.project.outputs.path }}\n        run: npm run build\n`; }
