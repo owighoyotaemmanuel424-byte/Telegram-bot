@@ -39,7 +39,7 @@ function limited(key: string) { const now = Date.now(); const current = rate.get
 function headerValue(value: string | string[] | undefined): string { return Array.isArray(value) ? (value[0] ?? '') : (value ?? ''); }
 
 const server = http.createServer((req, res) => {
-  if (req.method === 'GET' && req.url === '/health') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, geminiConfigured: Boolean(geminiClient), telegramConfigured: Boolean(telegramApi), convexConfigured: Boolean(jobs), storageConfigured: Boolean(multimodalStorage), appBuilderConfigured: Boolean(appBuilder), githubConfigured: Boolean(config.GITHUB_TOKEN && config.GITHUB_OWNER && config.GITHUB_REPOSITORY), vercelConfigured: Boolean(vercelDeployer), videoProviderConfigured: videoProvider.capabilities.imageToVideo, imageProviderConfigured: imageProvider.capabilities.imageGeneration, audioProviderConfigured: audioProvider.capabilities.audioGeneration })); return; }
+  if (req.method === 'GET' && req.url === '/health') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, geminiConfigured: Boolean(geminiClient), telegramConfigured: Boolean(telegramApi), convexConfigured: Boolean(jobs), storageConfigured: Boolean(multimodalStorage), appBuilderConfigured: Boolean(appBuilder), githubConfigured: Boolean(config.GITHUB_TOKEN && config.GITHUB_OWNER && config.GITHUB_REPOSITORY), vercelConfigured: Boolean(vercelDeployer), webhookConfigured: Boolean(config.PUBLIC_BASE_URL && config.TELEGRAM_WEBHOOK_SECRET), videoProviderConfigured: videoProvider.capabilities.imageToVideo, imageProviderConfigured: imageProvider.capabilities.imageGeneration, audioProviderConfigured: audioProvider.capabilities.audioGeneration })); return; }
   if (req.method === 'GET' && req.url === '/admin/providers') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(adminProviderSettingsPage()); return; }
   if (req.method === 'GET' && req.url === '/admin/api/providers') { try { const result = adminConfigResponse(); res.writeHead(result.status, { 'content-type': 'application/json' }); void result.text().then(text => res.end(text)); } catch { res.writeHead(500); res.end('Internal error'); } return; }
   if (req.method === 'PUT' && req.url === '/admin/api/providers') { let body = ''; req.setEncoding('utf8'); req.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > MAX_BODY_BYTES) req.destroy(); }); req.on('end', async () => { try { const request = new Request('http://localhost/admin/api/providers', { method: 'PUT', headers: { 'content-type': headerValue(req.headers['content-type']), 'x-admin-secret': headerValue(req.headers['x-admin-secret']) }, body }); const result = await updateAdminConfig(request); const text = await result.text(); res.writeHead(result.status, { 'content-type': 'application/json' }); res.end(text); } catch { res.writeHead(400); res.end('Bad request'); } }); return; }
@@ -54,11 +54,24 @@ const server = http.createServer((req, res) => {
   res.writeHead(404); res.end('Not found');
 });
 
-server.listen(config.PORT, async () => {
-  console.log(`Gemini Telegram assistant listening on :${config.PORT}`);
-  if (config.NODE_ENV === 'production' && telegramApi && config.PUBLIC_BASE_URL && config.TELEGRAM_WEBHOOK_SECRET) {
+async function startTelegramReceiver() {
+  if (!telegramApi || !handlers) { console.warn('Telegram receiver disabled: TELEGRAM_BOT_TOKEN and GEMINI_API_KEY are required.'); return; }
+  if (config.PUBLIC_BASE_URL && config.TELEGRAM_WEBHOOK_SECRET) {
     const webhookUrl = `${config.PUBLIC_BASE_URL.replace(/\/$/, '')}/api/telegram/webhook`;
-    try { await telegramApi.setWebhook(webhookUrl, config.TELEGRAM_WEBHOOK_SECRET); console.log(`Telegram webhook registered: ${webhookUrl}`); }
-    catch (error) { console.error('Telegram webhook registration failed:', error); }
+    try { await telegramApi.setWebhook(webhookUrl, config.TELEGRAM_WEBHOOK_SECRET); console.log(`Telegram webhook registered: ${webhookUrl}`); return; }
+    catch (error) { console.error('Telegram webhook registration failed; falling back to polling:', error); }
   }
-});
+  try { await telegramApi.deleteWebhook(); } catch (error) { console.error('Could not clear Telegram webhook before polling:', error); }
+  let offset = 0;
+  console.log('Telegram long polling receiver started.');
+  const poll = async () => {
+    try {
+      const updates = await telegramApi.getUpdates(offset, 25);
+      for (const update of updates) { offset = Math.max(offset, Number(update.update_id) + 1); void handlers.handle(update).catch(error => console.error('Telegram polling handler error', error)); }
+    } catch (error) { console.error('Telegram polling error:', error); await new Promise(resolve => setTimeout(resolve, 5000)); }
+    setImmediate(poll);
+  };
+  void poll();
+}
+
+server.listen(config.PORT, () => { console.log(`Gemini Telegram assistant listening on :${config.PORT}`); void startTelegramReceiver(); });
