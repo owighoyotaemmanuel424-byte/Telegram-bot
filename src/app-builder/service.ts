@@ -1,8 +1,10 @@
+import { randomBytes } from 'node:crypto';
 import { GeminiClient } from '../gemini/client.js';
 import { VercelDeployer } from './deployer.js';
 
 export type GeneratedFile = { path: string; content: string };
-export type BuildResult = { projectName: string; slug: string; summary: string; files: GeneratedFile[]; branch: string; repositoryUrl: string; deployment?: { url: string; id: string; readyState: string; health: { ok: boolean; status: number; finalUrl: string }; rolledBack?: boolean } };
+export type AdminCredentials = { email: string; password: string };
+export type BuildResult = { projectName: string; slug: string; summary: string; files: GeneratedFile[]; branch: string; repositoryUrl: string; deployment?: { url: string; id: string; readyState: string; health: { ok: boolean; status: number; finalUrl: string }; rolledBack?: boolean; adminCredentials?: AdminCredentials } };
 
 const MAX_FILES = 35;
 const MAX_FILE_BYTES = 40_000;
@@ -10,12 +12,14 @@ const MAX_REPAIR_ATTEMPTS = 2;
 
 function slugify(value: string): string { return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'generated-app'; }
 function extractJson(text: string): unknown { const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim(); const candidate = fenced ?? text.trim(); const start = candidate.indexOf('{'); const end = candidate.lastIndexOf('}'); if (start < 0 || end <= start) throw new Error('AI returned an invalid project manifest.'); return JSON.parse(candidate.slice(start, end + 1)); }
+function wantsAdmin(prompt: string): boolean { return /\b(admin|administrator|admin panel|dashboard login|authentication|auth|login)\b/i.test(prompt); }
+function createAdminCredentials(slug: string): AdminCredentials { return { email: `admin@${slug}.local`, password: `Adm-${randomBytes(12).toString('base64url')}` }; }
 
 export class AppBuilderService {
   constructor(private readonly gemini = new GeminiClient(), private readonly deployer?: VercelDeployer) {}
 
   async generate(prompt: string, owner: string, repo: string, token: string): Promise<BuildResult> {
-    const response = await this.gemini.generateContent({ systemInstruction: `You are a senior full-stack engineer generating a small, runnable web application from a Telegram user's request. Return ONLY valid JSON with this shape: {"projectName":"...","summary":"...","files":[{"path":"...","content":"..."}]}. Use Vite + React + TypeScript + plain CSS unless the request clearly needs another stack. The generated project must be self-contained, runnable with npm install && npm run build, and must not contain secrets. Keep it MVP-sized: at most ${MAX_FILES} files and each file under ${MAX_FILE_BYTES} bytes. Include package.json, index.html, src/main.tsx and required source files. If the user requests authentication/admin functionality, implement it using server-side validation and environment variables named ADMIN_EMAIL and ADMIN_PASSWORD; never hard-code credentials or expose them through Vite client variables. Do not use markdown fences.`, contents: [{ role: 'user', parts: [{ text: prompt }] }] });
+    const response = await this.gemini.generateContent({ systemInstruction: `You are a senior full-stack engineer generating a small, runnable web application from a Telegram user's request. Return ONLY valid JSON with this shape: {"projectName":"...","summary":"...","files":[{"path":"...","content":"..."}]}. Use Vite + React + TypeScript + plain CSS unless the request clearly needs another stack. The generated project must be self-contained, runnable with npm install && npm run build, and must not contain secrets. Keep it MVP-sized: at most ${MAX_FILES} files and each file under ${MAX_FILE_BYTES} bytes. Include package.json, index.html, src/main.tsx and required source files. If the user requests authentication/admin functionality, prefer a server-capable stack such as Next.js and implement server-side validation using ADMIN_EMAIL and ADMIN_PASSWORD; never hard-code credentials or expose them through Vite client variables. Do not use markdown fences.`, contents: [{ role: 'user', parts: [{ text: prompt }] }] });
     const text = response.candidates?.[0]?.content?.parts?.map(part => part.text ?? '').join('') ?? '';
     const parsed = extractJson(text) as { projectName?: unknown; summary?: unknown; files?: unknown };
     if (!Array.isArray(parsed.files)) throw new Error('AI did not return project files.');
@@ -31,19 +35,32 @@ export class AppBuilderService {
     return { projectName, slug, summary: typeof parsed.summary === 'string' ? parsed.summary : 'Generated application', files, branch, repositoryUrl: `https://github.com/${owner}/${repo}` };
   }
 
-  async deployExistingBranch(owner: string, repo: string, branch: string, projectName: string): Promise<NonNullable<BuildResult['deployment']>> {
+  async deployExistingBranch(owner: string, repo: string, branch: string, projectName: string, prompt = ''): Promise<NonNullable<BuildResult['deployment']>> {
     if (!this.deployer) throw new Error('Vercel deployment is not configured.');
     const slug = slugify(projectName);
     const previous = (await this.deployer.listProductionDeployments(slug)).find(item => item.state === 'READY');
-    const created = await this.deployer.deployFromGitHub(owner, repo, branch, slug, `generated/${slug}`);
-    const ready = await this.deployer.waitForReady(created.id);
-    const health = await this.deployer.healthCheck(ready.url);
+    const first = await this.deployer.waitForReady((await this.deployer.deployFromGitHub(owner, repo, branch, slug, `generated/${slug}`)).id);
+    let credentials: AdminCredentials | undefined;
+    if (wantsAdmin(prompt)) {
+      credentials = createAdminCredentials(slug);
+      if (!first.projectId) throw new Error('Vercel did not return a project ID; cannot configure admin credentials safely.');
+      await this.deployer.setProductionEnv(first.projectId, { ADMIN_EMAIL: credentials.email, ADMIN_PASSWORD: credentials.password });
+      const configured = await this.deployer.deployFromGitHub(owner, repo, branch, slug, `generated/${slug}`);
+      const readyConfigured = await this.deployer.waitForReady(configured.id);
+      const healthConfigured = await this.deployer.healthCheck(readyConfigured.url);
+      if (!healthConfigured.ok) {
+        try { await this.deployer.rollback(slug, previous?.id ?? first.id); } catch {}
+        throw new Error(`Admin-configured deployment failed live health check (HTTP ${healthConfigured.status}). Production traffic was rolled back.`);
+      }
+      return { ...readyConfigured, health: healthConfigured, adminCredentials: credentials };
+    }
+    const health = await this.deployer.healthCheck(first.url);
     if (!health.ok) {
       let rolledBack = false;
       if (previous) { try { await this.deployer.rollback(slug, previous.id); rolledBack = true; } catch {} }
       throw new Error(`Deployment reached READY but failed live health check (HTTP ${health.status}).${rolledBack ? ' Production traffic was rolled back.' : ''}`);
     }
-    return { ...ready, health };
+    return { ...first, health };
   }
 
   private buildWorkflow(): string { return `name: Generated App Build\n\non:\n  push:\n    paths:\n      - 'generated/**'\n  workflow_dispatch:\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 20\n      - name: Locate generated project\n        id: project\n        shell: bash\n        run: |\n          path=$(find generated -mindepth 2 -maxdepth 2 -name package.json -print -quit)\n          test -n \"$path\"\n          echo \"path=$(dirname \"$path\")\" >> \"$GITHUB_OUTPUT\"\n      - name: Install dependencies\n        working-directory: ${{ steps.project.outputs.path }}\n        run: npm install --no-audit --no-fund\n      - name: Build\n        working-directory: ${{ steps.project.outputs.path }}\n        run: npm run build\n`; }
@@ -83,15 +100,9 @@ export class AppBuilderService {
     throw new Error('Timed out waiting for generated app build validation.');
   }
 
-  private async getRunLogs(owner: string, repo: string, token: string, runId: number): Promise<string> {
-    const jobs = await this.github(token, `/repos/${owner}/${repo}/actions/runs/${runId}/jobs?per_page=100`);
-    const logs: string[] = [];
-    for (const job of jobs.jobs ?? []) { try { logs.push(await this.githubText(token, `/repos/${owner}/${repo}/actions/jobs/${job.id}/logs`)); } catch { logs.push(`Job ${job.name} failed without readable logs.`); } }
-    return logs.join('\n').slice(-16000);
-  }
-
+  private async getRunLogs(owner: string, repo: string, token: string, runId: number): Promise<string> { const jobs = await this.github(token, `/repos/${owner}/${repo}/actions/runs/${runId}/jobs?per_page=100`); const logs: string[] = []; for (const job of jobs.jobs ?? []) { try { logs.push(await this.githubText(token, `/repos/${owner}/${repo}/actions/jobs/${job.id}/logs`)); } catch { logs.push(`Job ${job.name} failed without readable logs.`); } } return logs.join('\n').slice(-16000); }
   private async github(token: string, path: string, init: RequestInit = {}): Promise<any> { const response = await fetch(`https://api.github.com${path}`, { ...init, headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${token}`, 'x-github-api-version': '2022-11-28', ...(init.headers ?? {}) } }); const body = await response.text(); if (!response.ok) throw new Error(`GitHub API ${response.status}: ${body.slice(0, 500)}`); return body ? JSON.parse(body) : undefined; }
   private async githubText(token: string, path: string): Promise<string> { const response = await fetch(`https://api.github.com${path}`, { headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${token}`, 'x-github-api-version': '2022-11-28' } }); const body = await response.text(); if (!response.ok) throw new Error(`GitHub logs ${response.status}: ${body.slice(0, 500)}`); return body; }
-  private async publish(owner: string, repo: string, token: string, branch: string, slug: string, files: GeneratedFile[], message: string): Promise<void> { const base = await this.github(token, `/repos/${owner}/${repo}/git/ref/heads/main`); await this.github(token, `/repos/${owner}/${repo}/git/refs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: base.object.sha }) }); for (const file of files) { const path = `generated/${slug}/${file.path}`; await this.github(token, `/repos/${owner}/${repo}/contents/${path}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: `${message}: ${file.path}`, content: Buffer.from(file.content, 'utf8').toString('base64'), branch }) }); } }
+  private async publish(owner: string, repo: string, token: string, branch: string, slug: string, files: GeneratedFile[], message: string): Promise<void> { const base = await this.github(token, `/repos/${owner}/${repo}/git/ref/heads/main`); await this.github(token, `/repos/${owner}/${repo}/git/refs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: base.object.sha }) }); for (const file of files) { const path = `generated/${slug}/${file.path}`; await this.github(token, `/repos/${owner}/${repo}/contents/${path}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: `${message}: ${file.path}`, content: Buffer.from(file.content, 'utf8').toString('base64'), branch }) } ); } }
   private async updateFiles(owner: string, repo: string, token: string, branch: string, slug: string, files: GeneratedFile[], message: string): Promise<void> { for (const file of files) { const path = `generated/${slug}/${file.path}`; const existing = await this.github(token, `/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(branch)}`); await this.github(token, `/repos/${owner}/${repo}/contents/${path}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: `${message}: ${file.path}`, content: Buffer.from(file.content, 'utf8').toString('base64'), sha: existing.sha, branch }) }); } }
 }
