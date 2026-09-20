@@ -1,4 +1,5 @@
 import { config } from '../config.js';
+import type { TelegramUpdate } from './types.js';
 
 export class TelegramApi {
   private readonly baseUrl: string;
@@ -22,4 +23,7 @@ export class TelegramApi {
   sendAudio(chatId: string, audio: string, caption?: string) { return this.call('sendAudio', { chat_id: chatId, audio, caption }); }
   sendDocument(chatId: string, document: string, caption?: string) { return this.call('sendDocument', { chat_id: chatId, document, caption }); }
   setWebhook(url: string, secretToken?: string) { return this.call('setWebhook', { url, secret_token: secretToken }); }
+  deleteWebhook() { return this.call<boolean>('deleteWebhook', { drop_pending_updates: false }); }
+  getWebhookInfo() { return this.call<{ url: string; pending_update_count: number; last_error_message?: string; last_error_date?: number }>('getWebhookInfo'); }
+  getUpdates(offset: number, timeout = 25) { return this.call<TelegramUpdate[]>('getUpdates', { offset, timeout, allowed_updates: ['message', 'callback_query'] }); }
 }
